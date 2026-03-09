@@ -8,7 +8,13 @@ from datetime import datetime
 from typing import List, Dict, Any
 from openpyxl import load_workbook
 
-app = Flask(__name__, static_folder='dist/public', static_url_path='')
+# Configurar o caminho correto para os arquivos estáticos
+static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
+if not os.path.exists(static_folder):
+    # Se dist/public não existir, tenta apenas dist
+    static_folder = os.path.join(os.path.dirname(__file__), 'dist')
+
+app = Flask(__name__, static_folder=static_folder, static_url_path='')
 
 # Configurações de Caminhos
 BASE_PATH = os.getenv("BASE_PATH", r"G:\Wallpaper\FEDCORP_PROCESSADOR")
@@ -256,10 +262,19 @@ def processar_arquivo(nome_arquivo):
 # Rotas da API
 @app.route('/')
 def index():
-    try:
+    index_path = os.path.join(app.static_folder, 'index.html')
+    if os.path.exists(index_path):
         return send_from_directory(app.static_folder, 'index.html')
-    except:
-        return jsonify({"status": "ok", "message": "Dashboard is running"}), 200
+    else:
+        # Debug: mostrar o caminho que está procurando
+        return jsonify({
+            "status": "error",
+            "message": "index.html não encontrado",
+            "static_folder": app.static_folder,
+            "index_path": index_path,
+            "exists": os.path.exists(index_path),
+            "files_in_static": os.listdir(app.static_folder) if os.path.exists(app.static_folder) else []
+        }), 404
 
 @app.route('/api/pending-files', methods=['GET'])
 def pending_files():
