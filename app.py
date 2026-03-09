@@ -256,7 +256,10 @@ def processar_arquivo(nome_arquivo):
 # Rotas da API
 @app.route('/')
 def index():
-    return send_from_directory(app.static_folder, 'index.html')
+    try:
+        return send_from_directory(app.static_folder, 'index.html')
+    except:
+        return jsonify({"status": "ok", "message": "Dashboard is running"}), 200
 
 @app.route('/api/pending-files', methods=['GET'])
 def pending_files():
@@ -314,7 +317,14 @@ def servir_documento(ano, mes, arquivo):
 
 @app.route('/<path:filename>')
 def static_files(filename):
-    return send_from_directory(app.static_folder, filename)
+    try:
+        return send_from_directory(app.static_folder, filename)
+    except:
+        # Se o arquivo não existir, serve o index.html (para client-side routing)
+        try:
+            return send_from_directory(app.static_folder, 'index.html')
+        except:
+            return jsonify({"erro": "Arquivo não encontrado"}), 404
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=False)
