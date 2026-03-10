@@ -3,18 +3,23 @@ import shutil
 import unicodedata
 import re
 import pdfplumber
-from flask import Flask, jsonify, send_from_directory
+import tempfile
+import json
+from flask import Flask, jsonify, send_from_directory, request, send_file
 from datetime import datetime
 from typing import List, Dict, Any
 from openpyxl import load_workbook
+from werkzeug.utils import secure_filename
+from io import BytesIO
+import zipfile
 
 # Configurar o caminho correto para os arquivos estáticos
 static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
 if not os.path.exists(static_folder):
-    # Se dist/public não existir, tenta apenas dist
     static_folder = os.path.join(os.path.dirname(__file__), 'dist')
 
 app = Flask(__name__, static_folder=static_folder, static_url_path='')
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 
 # Configurações de Caminhos
 BASE_PATH = os.getenv("BASE_PATH", r"G:\Wallpaper\FEDCORP_PROCESSADOR")
@@ -24,6 +29,10 @@ NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 BASE_CONDOMINIOS_PATH = os.path.join(BASE_PATH, "BASE", "DADOS_CONDOMINIOS.xlsx")
 PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 PASTA_DOCUMENTOS_FINAL = os.path.join(BASE_PATH, "DOCUMENTOS")
+
+# Pasta temporária para uploads
+TEMP_UPLOAD_PATH = os.path.join(tempfile.gettempdir(), "fedcorp_uploads")
+os.makedirs(TEMP_UPLOAD_PATH, exist_ok=True)
 
 # Dados Fixos para Seguro de Vida (FEDCORP)
 CNPJ_ADMIN = "26231209000150"
@@ -111,7 +120,7 @@ def carregar_condominios():
     
     return condominios
 
-def processar_arquivo(nome_arquivo):
+def processar_arquivo(nome_arquivo, caminho_entrada=None):
     resultado = {
         "arquivo": nome_arquivo,
         "status": "erro",
@@ -120,7 +129,8 @@ def processar_arquivo(nome_arquivo):
     }
     
     try:
-        caminho_entrada = os.path.join(ENTRADA_PATH, nome_arquivo)
+        if caminho_entrada is None:
+            caminho_entrada = os.path.join(ENTRADA_PATH, nome_arquivo)
         
         if not os.path.exists(caminho_entrada):
             resultado["mensagem"] = f"Arquivo não encontrado: {nome_arquivo}"
@@ -130,14 +140,22 @@ def processar_arquivo(nome_arquivo):
         cnpj_condominio = extrair_cnpj_do_nome_arquivo(nome_arquivo)
         if not cnpj_condominio:
             resultado["mensagem"] = "CNPJ não encontrado no nome do arquivo"
-            shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+            if os.path.exists(caminho_entrada):
+                try:
+                    shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+                except:
+                    pass
             return resultado
         
         # Carregar dados de condominios
         condominios = carregar_condominios()
         if cnpj_condominio not in condominios:
             resultado["mensagem"] = f"Condomínio com CNPJ {cnpj_condominio} não cadastrado"
-            shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+            if os.path.exists(caminho_entrada):
+                try:
+                    shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+                except:
+                    pass
             return resultado
         
         cond_info = condominios[cnpj_condominio]
@@ -146,14 +164,22 @@ def processar_arquivo(nome_arquivo):
         dados_pdf = extrair_dados_pdf(caminho_entrada)
         if not dados_pdf["linha_digitavel"]:
             resultado["mensagem"] = "Não foi possível extrair a linha digitável do PDF"
-            shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+            if os.path.exists(caminho_entrada):
+                try:
+                    shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+                except:
+                    pass
             return resultado
         
         # Converter para código de barras
         codigo_barras = converter_linha_para_codigo_barras(dados_pdf["linha_digitavel"])
         if not codigo_barras:
             resultado["mensagem"] = "Código de barras inválido"
-            shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+            if os.path.exists(caminho_entrada):
+                try:
+                    shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+                except:
+                    pass
             return resultado
         
         # Preparar dados para arquivo de remessa
@@ -216,7 +242,7 @@ def processar_arquivo(nome_arquivo):
         
         # Registro 3 (Documentos)
         ano_mes = data_atual.strftime("%Y/%m")
-        url_documento = f"http://127.0.0.1:5000/docs/{ano_mes}/{nome_arquivo}"
+        url_documento = f"https://fedcorp-erp-dashboard.onrender.com/docs/{ano_mes}/{nome_arquivo}"
         registro_3 = (
             "3" +
             fixo(sequencial, 4) +
@@ -230,6 +256,7 @@ def processar_arquivo(nome_arquivo):
         nome_remessa = f"remessa_{data_atual.strftime('%Y%m%d_%H%M%S')}.txt"
         caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
         
+        os.makedirs(GERADAS_PATH, exist_ok=True)
         with open(caminho_remessa, 'w', encoding='utf-8') as f:
             f.write(registro_0 + "\n")
             f.write(registro_1 + "\n")
@@ -239,11 +266,18 @@ def processar_arquivo(nome_arquivo):
         # Copiar PDF para pasta de documentos
         os.makedirs(os.path.join(PASTA_DOCS_PATH, ano_mes), exist_ok=True)
         caminho_docs = os.path.join(PASTA_DOCS_PATH, ano_mes, nome_arquivo)
-        shutil.copy2(caminho_entrada, caminho_docs)
+        try:
+            shutil.copy2(caminho_entrada, caminho_docs)
+        except:
+            pass
         
-        # Mover PDF para pasta final
-        os.makedirs(PASTA_DOCUMENTOS_FINAL, exist_ok=True)
-        shutil.move(caminho_entrada, os.path.join(PASTA_DOCUMENTOS_FINAL, nome_arquivo))
+        # Mover PDF para pasta final (apenas se for do ENTRADA_PATH)
+        if caminho_entrada == os.path.join(ENTRADA_PATH, nome_arquivo):
+            os.makedirs(PASTA_DOCUMENTOS_FINAL, exist_ok=True)
+            try:
+                shutil.move(caminho_entrada, os.path.join(PASTA_DOCUMENTOS_FINAL, nome_arquivo))
+            except:
+                pass
         
         resultado["status"] = "sucesso"
         resultado["mensagem"] = f"Arquivo processado com sucesso"
@@ -251,7 +285,8 @@ def processar_arquivo(nome_arquivo):
             "remessa": nome_remessa,
             "condominio": cond_info["nome"],
             "valor": f"R$ {valor:.2f}",
-            "vencimento": vencimento
+            "vencimento": vencimento,
+            "cnpj": cnpj_condominio
         }
     
     except Exception as e:
@@ -266,14 +301,10 @@ def index():
     if os.path.exists(index_path):
         return send_from_directory(app.static_folder, 'index.html')
     else:
-        # Debug: mostrar o caminho que está procurando
         return jsonify({
             "status": "error",
             "message": "index.html não encontrado",
-            "static_folder": app.static_folder,
-            "index_path": index_path,
-            "exists": os.path.exists(index_path),
-            "files_in_static": os.listdir(app.static_folder) if os.path.exists(app.static_folder) else []
+            "static_folder": app.static_folder
         }), 404
 
 @app.route('/api/pending-files', methods=['GET'])
@@ -285,6 +316,83 @@ def pending_files():
             "total": len(arquivos),
             "arquivos": arquivos
         })
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/upload', methods=['POST'])
+def upload_files():
+    try:
+        if 'files' not in request.files:
+            return jsonify({"erro": "Nenhum arquivo enviado"}), 400
+        
+        files = request.files.getlist('files')
+        resultados = {
+            "total": len(files),
+            "sucesso": 0,
+            "erros": 0,
+            "detalhes": []
+        }
+        
+        for file in files:
+            if file and file.filename.lower().endswith('.pdf'):
+                try:
+                    # Salvar arquivo temporário
+                    filename = secure_filename(file.filename)
+                    temp_path = os.path.join(TEMP_UPLOAD_PATH, filename)
+                    file.save(temp_path)
+                    
+                    # Processar arquivo
+                    resultado = processar_arquivo(filename, temp_path)
+                    resultados["detalhes"].append(resultado)
+                    
+                    if resultado["status"] == "sucesso":
+                        resultados["sucesso"] += 1
+                    else:
+                        resultados["erros"] += 1
+                    
+                    # Limpar arquivo temporário
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
+                
+                except Exception as e:
+                    resultados["erros"] += 1
+                    resultados["detalhes"].append({
+                        "arquivo": file.filename,
+                        "status": "erro",
+                        "mensagem": str(e)
+                    })
+        
+        return jsonify(resultados)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/download-remessas', methods=['GET'])
+def download_remessas():
+    try:
+        os.makedirs(GERADAS_PATH, exist_ok=True)
+        
+        # Listar todos os arquivos de remessa
+        remessas = [f for f in os.listdir(GERADAS_PATH) if f.endswith('.txt')]
+        
+        if not remessas:
+            return jsonify({"erro": "Nenhuma remessa disponível"}), 404
+        
+        # Criar ZIP com todas as remessas
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for remessa in remessas:
+                remessa_path = os.path.join(GERADAS_PATH, remessa)
+                zip_file.write(remessa_path, arcname=remessa)
+        
+        zip_buffer.seek(0)
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'remessas_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
+        )
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -335,7 +443,6 @@ def static_files(filename):
     try:
         return send_from_directory(app.static_folder, filename)
     except:
-        # Se o arquivo não existir, serve o index.html (para client-side routing)
         try:
             return send_from_directory(app.static_folder, 'index.html')
         except:
