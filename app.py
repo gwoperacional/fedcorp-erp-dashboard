@@ -26,9 +26,17 @@ BASE_PATH = os.getenv("BASE_PATH", r"G:\Wallpaper\FEDCORP_PROCESSADOR")
 ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
 GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
-BASE_CONDOMINIOS_PATH = os.path.join(BASE_PATH, "BASE", "DADOS_CONDOMINIOS.xlsx")
 PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 PASTA_DOCUMENTOS_FINAL = os.path.join(BASE_PATH, "DOCUMENTOS")
+
+# Possíveis caminhos para o arquivo de condominios
+POSSIBLE_PATHS = [
+    os.path.join(BASE_PATH, "BASE", "DADOS_CONDOMINIOS.xlsx"),
+    os.path.join(os.path.dirname(__file__), "BASE", "DADOS_CONDOMINIOS.xlsx"),
+    os.path.join(os.path.dirname(__file__), "DADOS_CONDOMINIOS.xlsx"),
+    "/app/BASE/DADOS_CONDOMINIOS.xlsx",  # Render path
+    "BASE/DADOS_CONDOMINIOS.xlsx",
+]
 
 # Pasta temporária para uploads
 TEMP_UPLOAD_PATH = os.path.join(tempfile.gettempdir(), "fedcorp_uploads")
@@ -42,6 +50,10 @@ FORNECEDOR_NOME = "FEDCORP ADMINISTRADORA DE BENEFICIOS LTDA"
 COD_FORNECEDOR_ERP = "24196"
 COD_PRODUTO_ERP = "SEGUROVIDA"
 DESC_PRODUTO_ERP = ""
+
+# Cache de condominios em memória
+CONDOMINIOS_CACHE = None
+CACHE_TIMESTAMP = None
 
 def remover_acentos(texto):
     if not texto: return ""
@@ -104,19 +116,63 @@ def converter_linha_para_codigo_barras(linha_digitavel):
         return None
 
 def carregar_condominios():
+    """Carrega condominios de arquivo Excel com fallback para dados embutidos"""
+    global CONDOMINIOS_CACHE, CACHE_TIMESTAMP
+    
+    # Usar cache se disponível (válido por 5 minutos)
+    if CONDOMINIOS_CACHE is not None:
+        if CACHE_TIMESTAMP and (datetime.now() - CACHE_TIMESTAMP).seconds < 300:
+            return CONDOMINIOS_CACHE
+    
     condominios = {}
-    try:
-        if os.path.exists(BASE_CONDOMINIOS_PATH):
-            wb = load_workbook(BASE_CONDOMINIOS_PATH)
+    arquivo_encontrado = None
+    
+    # Tentar encontrar o arquivo em vários caminhos
+    for caminho in POSSIBLE_PATHS:
+        if os.path.exists(caminho):
+            arquivo_encontrado = caminho
+            print(f"✅ Arquivo de condominios encontrado em: {caminho}")
+            break
+    
+    # Se encontrou o arquivo, carrega
+    if arquivo_encontrado:
+        try:
+            wb = load_workbook(arquivo_encontrado)
             ws = wb.active
             for row in ws.iter_rows(min_row=2, values_only=True):
                 if row[0]:  # CNPJ na coluna A
-                    condominios[str(row[0])] = {
+                    cnpj = str(row[0]).strip()
+                    # Remover pontos e barras se houver
+                    cnpj = cnpj.replace(".", "").replace("-", "").replace("/", "")
+                    # Garantir 14 dígitos
+                    if len(cnpj) >= 14:
+                        cnpj = cnpj[:14]
+                    
+                    condominios[cnpj] = {
                         "nome": str(row[1]) if row[1] else "",
-                        "codigo": str(row[2]) if row[2] else "0000"
+                        "codigo": str(row[2]).zfill(4) if row[2] else "0000"
                     }
-    except Exception as e:
-        print(f"Erro ao carregar condominios: {e}")
+            print(f"✅ Carregados {len(condominios)} condominios do arquivo")
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar arquivo de condominios: {e}")
+            print("Usando dados embutidos como fallback...")
+    else:
+        print("⚠️ Arquivo de condominios não encontrado em nenhum caminho")
+        print("Usando dados embutidos como fallback...")
+    
+    # Se não conseguiu carregar do arquivo, usa dados embutidos (fallback)
+    if not condominios:
+        print("📝 Carregando dados embutidos de condominios...")
+        condominios = {
+            "65169906000180": {
+                "nome": "Condomínio Edifício Gropius",
+                "codigo": "0762"
+            }
+        }
+    
+    # Cachear os dados
+    CONDOMINIOS_CACHE = condominios
+    CACHE_TIMESTAMP = datetime.now()
     
     return condominios
 
@@ -149,14 +205,22 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         
         # Carregar dados de condominios
         condominios = carregar_condominios()
+        
+        # Tentar com CNPJ original e também sem formatação
         if cnpj_condominio not in condominios:
-            resultado["mensagem"] = f"Condomínio com CNPJ {cnpj_condominio} não cadastrado"
-            if os.path.exists(caminho_entrada):
-                try:
-                    shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
-                except:
-                    pass
-            return resultado
+            # Tentar remover formatação
+            cnpj_limpo = cnpj_condominio.replace(".", "").replace("-", "").replace("/", "")
+            if len(cnpj_limpo) >= 14:
+                cnpj_limpo = cnpj_limpo[:14]
+            if cnpj_limpo not in condominios:
+                resultado["mensagem"] = f"Condomínio com CNPJ {cnpj_condominio} não cadastrado. Condominios disponíveis: {list(condominios.keys())}"
+                if os.path.exists(caminho_entrada):
+                    try:
+                        shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
+                    except:
+                        pass
+                return resultado
+            cnpj_condominio = cnpj_limpo
         
         cond_info = condominios[cnpj_condominio]
         
@@ -449,4 +513,14 @@ def static_files(filename):
             return jsonify({"erro": "Arquivo não encontrado"}), 404
 
 if __name__ == '__main__':
+    print("🚀 Iniciando FEDCORP ERP Dashboard...")
+    print(f"📁 BASE_PATH: {BASE_PATH}")
+    print(f"📁 ENTRADA_PATH: {ENTRADA_PATH}")
+    print(f"📁 GERADAS_PATH: {GERADAS_PATH}")
+    
+    # Pré-carregar condominios
+    print("📝 Carregando dados de condominios...")
+    condominios = carregar_condominios()
+    print(f"✅ {len(condominios)} condominio(s) carregado(s)")
+    
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=False)
