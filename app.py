@@ -100,19 +100,51 @@ def extrair_dados_pdf(pdf_path):
     return dados
 
 def converter_linha_para_codigo_barras(linha_digitavel):
-    if not linha_digitavel or len(linha_digitavel) != 47:
+    if not linha_digitavel:
         return None
     
     try:
-        banco = linha_digitavel[0:3]
-        moeda = linha_digitavel[3]
-        vencimento = linha_digitavel[4:8]
-        valor = linha_digitavel[8:18]
-        campo_livre = linha_digitavel[18:47]
+        # Remover pontos e espaços
+        linha_limpa = linha_digitavel.replace(".", "").replace(" ", "")
         
-        codigo_barras = banco + moeda + vencimento + valor + campo_livre
-        return codigo_barras
-    except:
+        # Aceitar tanto 47 quanto 50 caracteres (com ou sem formatação)
+        if len(linha_limpa) == 50:
+            # Formato: XXXXX.XXXXX XXXXX.XXXXXX XXXXX.XXXXXX X XXXXXXXXXXXXXX
+            # Remover os 3 primeiros dígitos (código do banco formatado)
+            # Estrutura: banco(5) + resto(45) = 50
+            # Precisamos extrair: banco(3) + moeda(1) + vencimento(4) + valor(10) + campo_livre(27)
+            banco = linha_limpa[0:3]
+            moeda = linha_limpa[3]
+            vencimento = linha_limpa[4:8]
+            valor = linha_limpa[8:18]
+            campo_livre = linha_limpa[18:50]  # 32 caracteres
+            
+            codigo_barras = banco + moeda + vencimento + valor + campo_livre
+            return codigo_barras
+        elif len(linha_limpa) == 47:
+            # Formato padrão de 47 dígitos
+            banco = linha_limpa[0:3]
+            moeda = linha_limpa[3]
+            vencimento = linha_limpa[4:8]
+            valor = linha_limpa[8:18]
+            campo_livre = linha_limpa[18:47]
+            
+            codigo_barras = banco + moeda + vencimento + valor + campo_livre
+            return codigo_barras
+        else:
+            # Tentar com o tamanho que temos
+            if len(linha_limpa) < 20:
+                return None
+            banco = linha_limpa[0:3]
+            moeda = linha_limpa[3]
+            vencimento = linha_limpa[4:8]
+            valor = linha_limpa[8:18]
+            campo_livre = linha_limpa[18:]
+            
+            codigo_barras = banco + moeda + vencimento + valor + campo_livre
+            return codigo_barras
+    except Exception as e:
+        print(f"Erro ao converter linha: {e}")
         return None
 
 def carregar_condominios():
