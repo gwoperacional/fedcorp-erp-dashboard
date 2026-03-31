@@ -59,6 +59,7 @@ def remover_acentos(texto):
     return unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("ASCII")
 
 def fixo(texto, tamanho):
+    """Preenche texto com espaços em branco até o tamanho especificado"""
     return str(texto).ljust(tamanho)[:tamanho]
 
 def extrair_cnpj_do_nome_arquivo(nome_arquivo):
@@ -110,7 +111,6 @@ def linha_digitavel_para_codigo_barras(linha):
     
     # Aceitar 47 ou 50 caracteres
     if len(linha) == 50:
-        # Remover formatação extra se houver
         linha = linha[:47]
     
     if len(linha) != 47:
@@ -197,11 +197,12 @@ def carregar_condominios():
     return condominios
 
 def processar_arquivo(nome_arquivo, caminho_entrada=None):
+    """Processa um arquivo PDF e retorna dados para remessa"""
     resultado = {
         "arquivo": nome_arquivo,
         "status": "erro",
         "mensagem": "",
-        "detalhes": {}
+        "dados": None
     }
     
     try:
@@ -216,11 +217,6 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         cnpj_condominio = extrair_cnpj_do_nome_arquivo(nome_arquivo)
         if not cnpj_condominio:
             resultado["mensagem"] = "CNPJ não encontrado no nome do arquivo"
-            if os.path.exists(caminho_entrada):
-                try:
-                    shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
-                except:
-                    pass
             return resultado
         
         # Carregar dados de condominios
@@ -228,17 +224,11 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         
         # Tentar com CNPJ original e também sem formatação
         if cnpj_condominio not in condominios:
-            # Tentar remover formatação
             cnpj_limpo = cnpj_condominio.replace(".", "").replace("-", "").replace("/", "")
             if len(cnpj_limpo) >= 14:
                 cnpj_limpo = cnpj_limpo[:14]
             if cnpj_limpo not in condominios:
-                resultado["mensagem"] = f"Condomínio com CNPJ {cnpj_condominio} não cadastrado. Condominios disponíveis: {list(condominios.keys())}"
-                if os.path.exists(caminho_entrada):
-                    try:
-                        shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
-                    except:
-                        pass
+                resultado["mensagem"] = f"Condomínio com CNPJ {cnpj_condominio} não cadastrado"
                 return resultado
             cnpj_condominio = cnpj_limpo
         
@@ -248,85 +238,22 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         dados_pdf = extrair_dados_pdf(caminho_entrada)
         if not dados_pdf["linha_digitavel"]:
             resultado["mensagem"] = "Não foi possível extrair a linha digitável do PDF"
-            if os.path.exists(caminho_entrada):
-                try:
-                    shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
-                except:
-                    pass
             return resultado
         
         # Converter para código de barras
         codigo_barras = linha_digitavel_para_codigo_barras(dados_pdf["linha_digitavel"])
         if not codigo_barras:
             resultado["mensagem"] = "Código de barras inválido"
-            if os.path.exists(caminho_entrada):
-                try:
-                    shutil.move(caminho_entrada, os.path.join(NAO_PROCESSADOS_PATH, nome_arquivo))
-                except:
-                    pass
             return resultado
         
         # Preparar dados para arquivo de remessa
         agora = datetime.now()
-        competencia = agora.strftime("%m%Y")
-        sequencial = "0001"
-        
         vencimento = dados_pdf["vencimento"] if dados_pdf["vencimento"] else agora.strftime("%d/%m/%Y")
         data_emissao = agora.strftime("%d/%m/%Y")
         valor_float = float(dados_pdf["valor"]) if dados_pdf["valor"] else 0.0
         valor_formatado = formatar_valor_ahreas(valor_float)
-        num_nota = dados_pdf["numero_nota"].zfill(10) if dados_pdf["numero_nota"] else "0000000000"
         cod_cond_erp = cond_info["codigo"].zfill(4)
         nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
-        
-        # REGISTRO 0 - HEADER (Pos 001-400)
-        header = (
-            "0" +                                         # 01 - Tipo Registro (Pos 001-001)
-            FORNECEDOR_CNPJ.zfill(14) +                   # 02 - CNPJ Fornecedor (Pos 002-015)
-            fixo(remover_acentos(FORNECEDOR_NOME).upper(), 60) + # 03 - Nome Fornecedor (Pos 016-075)
-            CNPJ_ADMIN.zfill(14) +                        # 04 - CNPJ Administradora (Pos 076-089)
-            fixo(remover_acentos(NOME_ADMIN).upper(), 60) + # 05 - Nome Administradora (Pos 090-149)
-            competencia +                                 # 06 - Mês/Ano Referência (Pos 150-155)
-            " " * 241 +                                   # 07 - Uso Ahreas (Pos 156-396)
-            str(sequencial).zfill(4)                      # 08 - Sequencial (Pos 397-400)
-        )
-        
-        # REGISTRO 1 - DETALHE NF
-        registro_1 = (
-            "1" +                                     # 01 - Tipo (001-001)
-            cod_cond_erp +                            # 02 - Cod Condomínio (002-005)
-            "    " +                                  # 03 - Espaços (006-009)
-            cnpj_condominio.zfill(14) +               # 04 - CNPJ Condomínio (010-023)
-            nome_cond_erp +                           # 05 - Nome Condomínio (024-073)
-            vencimento +                              # 06 - Vencimento (074-083)
-            valor_formatado +                         # 07 - Valor (084-095)
-            codigo_barras +                           # 08 - Código de Barras (096-139)
-            valor_formatado +                         # 09 - Valor Total (140-151)
-            "000000000,00" +                          # 10 - IRRF (152-163)
-            "000000000,00" +                          # 11 - ISS (164-175)
-            "000000000,00" +                          # 12 - INSS (176-187)
-            "000000000,00" +                          # 13 - CSSL (188-199)
-            "000000000,00" +                          # 14 - Descontos (200-211)
-            "N" +                                     # 15 - Nota Fiscal S/N (212-212)
-            "          " +                            # 16 - Data Emissão NF (213-222) - em branco (sem NF)
-            "          " +                            # 17 - Número NF (223-232) - em branco (sem NF)
-            "     " +                                 # 18 - Série NF (233-237) - em branco
-            "     " +                                 # 19 - Tipo NF (238-242) - em branco
-            " " * 154 +                               # 20-23 - Uso Ahreas (243-396)
-            str(sequencial).zfill(4)                  # 24 - Sequencial (397-400)
-        )
-        
-        # REGISTRO 2 - DETALHE ITENS (Código SEGUROVIDA)
-        registro_2 = (
-            "2" +                                     # 01 - Tipo (001-001)
-            fixo(COD_PRODUTO_ERP, 10) +               # 02 - Cod Produto (002-011)
-            fixo(DESC_PRODUTO_ERP, 60) +              # 03 - Descrição (012-071)
-            "000000000,00" +                          # 04 - Valor Item Prod (072-083)
-            valor_formatado +                         # 05 - Valor Item Serv (084-095)
-            valor_formatado +                         # 06 - Valor Total Item (096-107)
-            " " * 289 +                               # 07 - Uso Ahreas (108-396)
-            str(sequencial).zfill(4)                  # 08 - Sequencial (397-400)
-        )
         
         # Copiar PDF para pasta de documentos
         ano_atual = agora.strftime("%Y")
@@ -339,45 +266,20 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         except:
             pass
         
-        # Gerar o link para o Registro 3
-        link_documento = f"https://fedcorp-erp-dashboard.onrender.com/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
-        
-        # REGISTRO 3 - DETALHE DOCUMENTOS
-        registro_3 = (
-            "3" +                                     # 01 - Tipo (001-001)
-            "0001" +                                  # 02 - Sequencial Imagens (002-005)
-            num_nota +                                # 03 - Número Nota (006-015)
-            fixo(link_documento, 300) +               # 04 - URL do Documento (016-315)
-            " " * 81 +                                # 07 - Uso Ahreas (316-396)
-            str(sequencial).zfill(4)                  # 08 - Sequencial Global (397-400)
-        )
-        
-        # Salvar arquivo de remessa
-        nome_remessa = f"REMESSA_FEDCORP_{agora.strftime('%Y%m%d%H%M%S')}.txt"
-        caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
-        
-        os.makedirs(GERADAS_PATH, exist_ok=True)
-        with open(caminho_remessa, 'w', encoding='utf-8') as f:
-            f.write(fixo(header, 400) + "\n")
-            f.write(fixo(registro_1, 400) + "\n")
-            f.write(fixo(registro_2, 400) + "\n")
-            f.write(fixo(registro_3, 400) + "\n")
-        
-        # Mover PDF para pasta de processados (apenas se for do ENTRADA_PATH)
-        if caminho_entrada == os.path.join(ENTRADA_PATH, nome_arquivo):
-            try:
-                shutil.move(caminho_entrada, os.path.join(GERADAS_PATH, nome_arquivo))
-            except:
-                pass
-        
+        # Retornar dados processados
         resultado["status"] = "sucesso"
-        resultado["mensagem"] = f"Arquivo processado com sucesso"
-        resultado["detalhes"] = {
-            "remessa": nome_remessa,
-            "condominio": cond_info["nome"],
-            "valor": f"R$ {valor_float:.2f}",
+        resultado["mensagem"] = "Arquivo processado com sucesso"
+        resultado["dados"] = {
+            "cnpj": cnpj_condominio,
+            "cod_cond": cod_cond_erp,
+            "nome_cond": nome_cond_erp,
             "vencimento": vencimento,
-            "cnpj": cnpj_condominio
+            "data_emissao": data_emissao,
+            "valor_formatado": valor_formatado,
+            "valor_float": valor_float,
+            "codigo_barras": codigo_barras,
+            "nome_arquivo": nome_arquivo,
+            "caminho_pdf": caminho_pdf_destino
         }
     
     except Exception as e:
@@ -386,6 +288,91 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         print(traceback.format_exc())
     
     return resultado
+
+def gerar_remessa_lote(lista_dados, competencia=None):
+    """Gera um arquivo de remessa único com múltiplos registros"""
+    if not lista_dados:
+        return None
+    
+    agora = datetime.now()
+    if not competencia:
+        competencia = agora.strftime("%m%Y")
+    
+    linhas = []
+    
+    # REGISTRO 0 - HEADER
+    header = (
+        "0" +                                         # 01 - Tipo Registro
+        FORNECEDOR_CNPJ.zfill(14) +                   # 02 - CNPJ Fornecedor
+        fixo(remover_acentos(FORNECEDOR_NOME).upper(), 60) + # 03 - Nome Fornecedor
+        CNPJ_ADMIN.zfill(14) +                        # 04 - CNPJ Administradora
+        fixo(remover_acentos(NOME_ADMIN).upper(), 60) + # 05 - Nome Administradora
+        competencia +                                 # 06 - Mês/Ano Referência
+        " " * 241 +                                   # 07 - Uso Ahreas
+        "0001"                                        # 08 - Sequencial
+    )
+    linhas.append(fixo(header, 400))
+    
+    # REGISTROS 1 e 2 para cada boleto
+    sequencial = 2
+    for dados in lista_dados:
+        # REGISTRO 1 - DETALHE NF
+        registro_1 = (
+            "1" +                                     # 01 - Tipo
+            dados["cod_cond"] +                       # 02 - Cod Condomínio
+            "    " +                                  # 03 - Espaços
+            dados["cnpj"].zfill(14) +                 # 04 - CNPJ Condomínio
+            dados["nome_cond"] +                      # 05 - Nome Condomínio
+            dados["vencimento"] +                     # 06 - Vencimento
+            dados["valor_formatado"] +                # 07 - Valor
+            dados["codigo_barras"] +                  # 08 - Código de Barras
+            dados["valor_formatado"] +                # 09 - Valor Total
+            "000000000,00" +                          # 10 - IRRF
+            "000000000,00" +                          # 11 - ISS
+            "000000000,00" +                          # 12 - INSS
+            "000000000,00" +                          # 13 - CSSL
+            "000000000,00" +                          # 14 - Descontos
+            "N" +                                     # 15 - Nota Fiscal S/N
+            "          " +                            # 16 - Data Emissão NF
+            "          " +                            # 17 - Número NF
+            "     " +                                 # 18 - Série NF
+            "     " +                                 # 19 - Tipo NF
+            " " * 154 +                               # 20-23 - Uso Ahreas
+            str(sequencial).zfill(4)                  # 24 - Sequencial
+        )
+        linhas.append(fixo(registro_1, 400))
+        
+        # REGISTRO 2 - DETALHE ITENS
+        registro_2 = (
+            "2" +                                     # 01 - Tipo
+            fixo(COD_PRODUTO_ERP, 10) +               # 02 - Cod Produto
+            fixo(DESC_PRODUTO_ERP, 60) +              # 03 - Descrição
+            "000000000,00" +                          # 04 - Valor Item Prod
+            dados["valor_formatado"] +                # 05 - Valor Item Serv
+            dados["valor_formatado"] +                # 06 - Valor Total Item
+            " " * 289 +                               # 07 - Uso Ahreas
+            str(sequencial).zfill(4)                  # 08 - Sequencial
+        )
+        linhas.append(fixo(registro_2, 400))
+        
+        sequencial += 1
+    
+    # REGISTRO 3 - TRAILER
+    total_registros = len(linhas) + 1  # +1 para o trailer
+    total_valor = sum(float(d["valor_float"]) for d in lista_dados)
+    valor_total_formatado = formatar_valor_ahreas(total_valor)
+    
+    trailer = (
+        "3" +                                         # 01 - Tipo
+        str(total_registros).zfill(6) +               # 02 - Total de Registros
+        str(len(lista_dados)).zfill(6) +              # 03 - Total de Títulos
+        valor_total_formatado +                       # 04 - Valor Total
+        " " * 367 +                                   # 05 - Uso Ahreas
+        "0001"                                        # 06 - Sequencial
+    )
+    linhas.append(fixo(trailer, 400))
+    
+    return "\n".join(linhas)
 
 # Rotas da API
 @app.route('/')
@@ -419,12 +406,18 @@ def upload_files():
             return jsonify({"erro": "Nenhum arquivo enviado"}), 400
         
         files = request.files.getlist('files')
+        modo_lote = request.form.get('modo_lote', 'false').lower() == 'true'
+        
         resultados = {
             "total": len(files),
             "sucesso": 0,
             "erros": 0,
+            "modo_lote": modo_lote,
+            "remessa": None,
             "detalhes": []
         }
+        
+        lista_dados_processados = []
         
         for file in files:
             if file and file.filename.lower().endswith('.pdf'):
@@ -440,6 +433,8 @@ def upload_files():
                     
                     if resultado["status"] == "sucesso":
                         resultados["sucesso"] += 1
+                        if modo_lote:
+                            lista_dados_processados.append(resultado["dados"])
                     else:
                         resultados["erros"] += 1
                     
@@ -456,6 +451,34 @@ def upload_files():
                         "status": "erro",
                         "mensagem": str(e)
                     })
+        
+        # Se modo lote, gerar remessa única
+        if modo_lote and lista_dados_processados:
+            try:
+                agora = datetime.now()
+                competencia = agora.strftime("%m%Y")
+                conteudo_remessa = gerar_remessa_lote(lista_dados_processados, competencia)
+                
+                nome_remessa = f"REMESSA_FEDCORP_LOTE_{agora.strftime('%Y%m%d%H%M%S')}.txt"
+                caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
+                
+                os.makedirs(GERADAS_PATH, exist_ok=True)
+                with open(caminho_remessa, 'w', encoding='utf-8') as f:
+                    f.write(conteudo_remessa)
+                
+                resultados["remessa"] = nome_remessa
+                
+                # Mover PDFs para pasta de processados
+                for dados in lista_dados_processados:
+                    try:
+                        caminho_origem = os.path.join(ENTRADA_PATH, dados["nome_arquivo"])
+                        if os.path.exists(caminho_origem):
+                            shutil.move(caminho_origem, os.path.join(GERADAS_PATH, dados["nome_arquivo"]))
+                    except:
+                        pass
+            
+            except Exception as e:
+                resultados["erro_lote"] = str(e)
         
         return jsonify(resultados)
     except Exception as e:
@@ -496,6 +519,8 @@ def processar():
         os.makedirs(GERADAS_PATH, exist_ok=True)
         os.makedirs(NAO_PROCESSADOS_PATH, exist_ok=True)
         
+        modo_lote = request.json.get('modo_lote', False) if request.json else False
+        
         arquivos = [f for f in os.listdir(ENTRADA_PATH) if f.lower().endswith('.pdf')]
         
         resultados = {
@@ -503,19 +528,50 @@ def processar():
             "sucesso": 0,
             "avisos": 0,
             "erros": 0,
+            "modo_lote": modo_lote,
+            "remessa": None,
             "detalhes": []
         }
         
+        lista_dados_processados = []
+        
         for arquivo in arquivos:
             resultado = processar_arquivo(arquivo)
-            resultados["detalhes"].append(resultado)
-            
             if resultado["status"] == "sucesso":
                 resultados["sucesso"] += 1
-            elif resultado["status"] == "aviso":
-                resultados["avisos"] += 1
+                if modo_lote:
+                    lista_dados_processados.append(resultado.get("dados"))
             else:
                 resultados["erros"] += 1
+            resultados["detalhes"].append(resultado)
+        
+        # Se modo lote, gerar remessa única
+        if modo_lote and lista_dados_processados:
+            try:
+                agora = datetime.now()
+                competencia = agora.strftime("%m%Y")
+                conteudo_remessa = gerar_remessa_lote(lista_dados_processados, competencia)
+                
+                nome_remessa = f"REMESSA_FEDCORP_LOTE_{agora.strftime('%Y%m%d%H%M%S')}.txt"
+                caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
+                
+                os.makedirs(GERADAS_PATH, exist_ok=True)
+                with open(caminho_remessa, 'w', encoding='utf-8') as f:
+                    f.write(conteudo_remessa)
+                
+                resultados["remessa"] = nome_remessa
+                
+                # Mover PDFs para pasta de processados
+                for arquivo in arquivos:
+                    try:
+                        caminho_origem = os.path.join(ENTRADA_PATH, arquivo)
+                        if os.path.exists(caminho_origem):
+                            shutil.move(caminho_origem, os.path.join(GERADAS_PATH, arquivo))
+                    except:
+                        pass
+            
+            except Exception as e:
+                resultados["erro_lote"] = str(e)
         
         return jsonify(resultados)
     except Exception as e:
