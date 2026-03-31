@@ -27,7 +27,6 @@ ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
 GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
-PASTA_DOCUMENTOS_FINAL = os.path.join(BASE_PATH, "DOCUMENTOS")
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
@@ -75,77 +74,65 @@ def extrair_dados_pdf(pdf_path):
                 t = pagina.extract_text()
                 if t: texto_completo += t + "\n"
             
-            # Extrair linha digitável
-            match_linha = re.search(r"(\d{5}\.\d{5}\s+\d{5}\.\d{6}\s+\d{5}\.\d{6}\s+\d+\s+\d{14})", texto_completo)
+            # Extrair linha digitável com regex flexível
+            regex_linha = r"\d{5}[\.\s]?\d{5}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d[\.\s]?\d{14}"
+            match_linha = re.search(regex_linha, texto_completo)
             if match_linha:
-                dados["linha_digitavel"] = match_linha.group(1).replace(" ", "")
+                dados["linha_digitavel"] = re.sub(r"\D", "", match_linha.group())
             
-            # Extrair vencimento (formato DD/MM/YYYY)
-            match_vencimento = re.search(r"(\d{2}/\d{2}/\d{4})", texto_completo)
-            if match_vencimento:
-                dados["vencimento"] = match_vencimento.group(1)
+            # Extrair número da nota
+            match_nota = re.search(r"(?:FATURA|NOTA|DOC|Nº|NUMERO)[:\s]+(\d+)", texto_completo, re.IGNORECASE)
+            if match_nota:
+                dados["numero_nota"] = match_nota.group(1)
             
-            # Extrair valor (formato 1.234,56)
-            match_valor = re.search(r"R\$\s*([\d.,]+)", texto_completo)
+            # Extrair vencimento - procurar por "Vencimento" primeiro
+            match_venc = re.search(r"Vencimento\s+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+            if match_venc:
+                dados["vencimento"] = match_venc.group(1)
+            else:
+                # Fallback: procurar por "ATE O VENCIMENTO"
+                match_venc = re.search(r"ATE O VENCIMENTO\s+(\d{2}/\d{2}/\d{4})", texto_completo)
+                if match_venc:
+                    dados["vencimento"] = match_venc.group(1)
+            
+            # Extrair valor
+            match_valor = re.search(r"VALOR TOTAL:?\s*R\$\s*([\d\.,]+)", texto_completo, re.IGNORECASE)
             if match_valor:
-                valor_str = match_valor.group(1).replace(".", "").replace(",", ".")
-                dados["valor"] = float(valor_str)
-            
-            # Usar primeiros dígitos como número da nota
-            if dados["linha_digitavel"]:
-                dados["numero_nota"] = dados["linha_digitavel"][:10]
+                dados["valor"] = match_valor.group(1).replace(".", "").replace(",", ".")
     except Exception as e:
         print(f"Erro ao extrair dados do PDF: {e}")
     
     return dados
 
-def converter_linha_para_codigo_barras(linha_digitavel):
-    if not linha_digitavel:
+def linha_digitavel_para_codigo_barras(linha):
+    """Converte linha digitável para código de barras usando algoritmo correto"""
+    linha = re.sub(r"\D", "", linha)
+    
+    # Aceitar 47 ou 50 caracteres
+    if len(linha) == 50:
+        # Remover formatação extra se houver
+        linha = linha[:47]
+    
+    if len(linha) != 47:
         return None
     
     try:
-        # Remover pontos e espaços
-        linha_limpa = linha_digitavel.replace(".", "").replace(" ", "")
+        banco = linha[0:3]
+        moeda = linha[3:4]
+        campo1 = linha[4:9]
+        campo2 = linha[10:20]
+        campo3 = linha[21:31]
+        dv_geral = linha[32:33]
+        fator_venc_valor = linha[33:47]
         
-        # Aceitar tanto 47 quanto 50 caracteres (com ou sem formatação)
-        if len(linha_limpa) == 50:
-            # Formato: XXXXX.XXXXX XXXXX.XXXXXX XXXXX.XXXXXX X XXXXXXXXXXXXXX
-            # Remover os 3 primeiros dígitos (código do banco formatado)
-            # Estrutura: banco(5) + resto(45) = 50
-            # Precisamos extrair: banco(3) + moeda(1) + vencimento(4) + valor(10) + campo_livre(27)
-            banco = linha_limpa[0:3]
-            moeda = linha_limpa[3]
-            vencimento = linha_limpa[4:8]
-            valor = linha_limpa[8:18]
-            campo_livre = linha_limpa[18:50]  # 32 caracteres
-            
-            codigo_barras = banco + moeda + vencimento + valor + campo_livre
-            return codigo_barras
-        elif len(linha_limpa) == 47:
-            # Formato padrão de 47 dígitos
-            banco = linha_limpa[0:3]
-            moeda = linha_limpa[3]
-            vencimento = linha_limpa[4:8]
-            valor = linha_limpa[8:18]
-            campo_livre = linha_limpa[18:47]
-            
-            codigo_barras = banco + moeda + vencimento + valor + campo_livre
-            return codigo_barras
-        else:
-            # Tentar com o tamanho que temos
-            if len(linha_limpa) < 20:
-                return None
-            banco = linha_limpa[0:3]
-            moeda = linha_limpa[3]
-            vencimento = linha_limpa[4:8]
-            valor = linha_limpa[8:18]
-            campo_livre = linha_limpa[18:]
-            
-            codigo_barras = banco + moeda + vencimento + valor + campo_livre
-            return codigo_barras
-    except Exception as e:
-        print(f"Erro ao converter linha: {e}")
+        codigo_barras = banco + moeda + dv_geral + fator_venc_valor + campo1 + campo2 + campo3
+        return codigo_barras
+    except:
         return None
+
+def formatar_valor_ahreas(valor_float):
+    """Formata valor para 12 posições com vírgula: 000000000,00"""
+    return f"{valor_float:012.2f}".replace(".", ",")
 
 def carregar_condominios():
     """Carrega condominios de arquivo Excel com fallback para dados embutidos"""
@@ -197,7 +184,7 @@ def carregar_condominios():
         print("📝 Carregando dados embutidos de condominios...")
         condominios = {
             "65169906000180": {
-                "nome": "Condomínio Edifício Gropius",
+                "nome": "CONDOMINIO EDIFICIO GROPIUS",
                 "codigo": "0762"
             }
         }
@@ -268,7 +255,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             return resultado
         
         # Converter para código de barras
-        codigo_barras = converter_linha_para_codigo_barras(dados_pdf["linha_digitavel"])
+        codigo_barras = linha_digitavel_para_codigo_barras(dados_pdf["linha_digitavel"])
         if not codigo_barras:
             resultado["mensagem"] = "Código de barras inválido"
             if os.path.exists(caminho_entrada):
@@ -279,99 +266,106 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             return resultado
         
         # Preparar dados para arquivo de remessa
-        vencimento = dados_pdf["vencimento"] or datetime.now().strftime("%d/%m/%Y")
-        valor = dados_pdf["valor"] or 0.0
-        numero_nota = dados_pdf["numero_nota"] or "0000000001"
-        
-        # Criar arquivo de remessa
-        data_atual = datetime.now()
-        competencia = data_atual.strftime("%m%Y")
+        agora = datetime.now()
+        competencia = agora.strftime("%m%Y")
         sequencial = "0001"
         
-        # Registro 0 (Header)
-        registro_0 = (
-            "0" +
-            fixo(FORNECEDOR_CNPJ, 14) +
-            fixo(remover_acentos(FORNECEDOR_NOME), 60) +
-            fixo(CNPJ_ADMIN, 14) +
-            fixo(remover_acentos(NOME_ADMIN), 60) +
-            fixo(competencia, 6) +
-            fixo("", 241) +
-            fixo(sequencial, 4)
+        vencimento = dados_pdf["vencimento"] if dados_pdf["vencimento"] else agora.strftime("%d/%m/%Y")
+        data_emissao = agora.strftime("%d/%m/%Y")
+        valor_float = float(dados_pdf["valor"]) if dados_pdf["valor"] else 0.0
+        valor_formatado = formatar_valor_ahreas(valor_float)
+        num_nota = dados_pdf["numero_nota"].zfill(10) if dados_pdf["numero_nota"] else "0000000000"
+        cod_cond_erp = cond_info["codigo"].zfill(4)
+        nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
+        
+        # REGISTRO 0 - HEADER (Pos 001-400)
+        header = (
+            "0" +                                         # 01 - Tipo Registro (Pos 001-001)
+            FORNECEDOR_CNPJ.zfill(14) +                   # 02 - CNPJ Fornecedor (Pos 002-015)
+            fixo(remover_acentos(FORNECEDOR_NOME).upper(), 60) + # 03 - Nome Fornecedor (Pos 016-075)
+            CNPJ_ADMIN.zfill(14) +                        # 04 - CNPJ Administradora (Pos 076-089)
+            fixo(remover_acentos(NOME_ADMIN).upper(), 60) + # 05 - Nome Administradora (Pos 090-149)
+            competencia +                                 # 06 - Mês/Ano Referência (Pos 150-155)
+            " " * 241 +                                   # 07 - Uso Ahreas (Pos 156-396)
+            str(sequencial).zfill(4)                      # 08 - Sequencial (Pos 397-400)
         )
         
-        # Registro 1 (Detalhe NF)
-        codigo_cond_formatado = fixo(cond_info["codigo"], 4)
+        # REGISTRO 1 - DETALHE NF
         registro_1 = (
-            "1" +
-            codigo_cond_formatado +
-            fixo("", 4) +
-            fixo(cnpj_condominio, 14) +
-            fixo(remover_acentos(cond_info["nome"]), 60) +
-            fixo(vencimento, 10) +
-            fixo(f"{valor:012.2f}".replace(".", ","), 12) +
-            fixo(codigo_barras, 44) +
-            fixo(f"{valor:012.2f}".replace(".", ","), 12) +
-            fixo("000000000,00", 12) +
-            fixo("000000000,00", 12) +
-            fixo("000000000,00", 12) +
-            fixo("000000000,00", 12) +
-            fixo("000000000,00", 12) +
-            fixo("N", 1) +
-            fixo(vencimento, 10) +
-            fixo(numero_nota, 10) +
-            fixo("", 95) +
-            fixo(sequencial, 4)
+            "1" +                                     # 01 - Tipo (001-001)
+            cod_cond_erp +                            # 02 - Cod Condomínio (002-005)
+            "    " +                                  # 03 - Espaços (006-009)
+            cnpj_condominio.zfill(14) +               # 04 - CNPJ Condomínio (010-023)
+            nome_cond_erp +                           # 05 - Nome Condomínio (024-073)
+            vencimento +                              # 06 - Vencimento (074-083)
+            valor_formatado +                         # 07 - Valor (084-095)
+            codigo_barras +                           # 08 - Código de Barras (096-139)
+            valor_formatado +                         # 09 - Valor Total (140-151)
+            "000000000,00" +                          # 10 - IRRF (152-163)
+            "000000000,00" +                          # 11 - ISS (164-175)
+            "000000000,00" +                          # 12 - INSS (176-187)
+            "000000000,00" +                          # 13 - CSSL (188-199)
+            "000000000,00" +                          # 14 - Descontos (200-211)
+            "N" +                                     # 15 - Nota Fiscal (212-212)
+            data_emissao +                            # 16 - Data Emissão (213-222)
+            num_nota +                                # 17 - Número Nota (223-232)
+            "     " +                                 # 18 - Série (233-237)
+            "     " +                                 # 19 - Tipo Nota (238-242)
+            " " * 154 +                               # 20-23 - Uso Ahreas (243-396)
+            str(sequencial).zfill(4)                  # 24 - Sequencial (397-400)
         )
         
-        # Registro 2 (Detalhe Itens)
+        # REGISTRO 2 - DETALHE ITENS (Código SEGUROVIDA)
         registro_2 = (
-            "2" +
-            fixo("", 10) +
-            fixo("", 60) +
-            fixo("000000000,00", 12) +
-            fixo(f"{valor:012.2f}".replace(".", ","), 12) +
-            fixo(f"{valor:012.2f}".replace(".", ","), 12) +
-            fixo("", 263) +
-            fixo(sequencial, 4)
+            "2" +                                     # 01 - Tipo (001-001)
+            fixo(COD_PRODUTO_ERP, 10) +               # 02 - Cod Produto (002-011)
+            fixo(DESC_PRODUTO_ERP, 60) +              # 03 - Descrição (012-071)
+            "000000000,00" +                          # 04 - Valor Item Prod (072-083)
+            valor_formatado +                         # 05 - Valor Item Serv (084-095)
+            valor_formatado +                         # 06 - Valor Total Item (096-107)
+            " " * 289 +                               # 07 - Uso Ahreas (108-396)
+            str(sequencial).zfill(4)                  # 08 - Sequencial (397-400)
         )
         
-        # Registro 3 (Documentos)
-        ano_mes = data_atual.strftime("%Y/%m")
-        url_documento = f"https://fedcorp-erp-dashboard.onrender.com/docs/{ano_mes}/{nome_arquivo}"
+        # Copiar PDF para pasta de documentos
+        ano_atual = agora.strftime("%Y")
+        mes_atual = agora.strftime("%m")
+        pasta_destino_docs = os.path.join(PASTA_DOCS_PATH, ano_atual, mes_atual)
+        os.makedirs(pasta_destino_docs, exist_ok=True)
+        caminho_pdf_destino = os.path.join(pasta_destino_docs, nome_arquivo)
+        try:
+            shutil.copy(caminho_entrada, caminho_pdf_destino)
+        except:
+            pass
+        
+        # Gerar o link para o Registro 3
+        link_documento = f"https://fedcorp-erp-dashboard.onrender.com/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
+        
+        # REGISTRO 3 - DETALHE DOCUMENTOS
         registro_3 = (
-            "3" +
-            fixo(sequencial, 4) +
-            fixo(numero_nota, 10) +
-            fixo(url_documento, 300) +
-            fixo("", 81) +
-            fixo(sequencial, 4)
+            "3" +                                     # 01 - Tipo (001-001)
+            "0001" +                                  # 02 - Sequencial Imagens (002-005)
+            num_nota +                                # 03 - Número Nota (006-015)
+            fixo(link_documento, 300) +               # 04 - URL do Documento (016-315)
+            " " * 81 +                                # 07 - Uso Ahreas (316-396)
+            str(sequencial).zfill(4)                  # 08 - Sequencial Global (397-400)
         )
         
         # Salvar arquivo de remessa
-        nome_remessa = f"remessa_{data_atual.strftime('%Y%m%d_%H%M%S')}.txt"
+        nome_remessa = f"REMESSA_FEDCORP_{agora.strftime('%Y%m%d%H%M%S')}.txt"
         caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
         
         os.makedirs(GERADAS_PATH, exist_ok=True)
         with open(caminho_remessa, 'w', encoding='utf-8') as f:
-            f.write(registro_0 + "\n")
-            f.write(registro_1 + "\n")
-            f.write(registro_2 + "\n")
-            f.write(registro_3 + "\n")
+            f.write(fixo(header, 400) + "\n")
+            f.write(fixo(registro_1, 400) + "\n")
+            f.write(fixo(registro_2, 400) + "\n")
+            f.write(fixo(registro_3, 400) + "\n")
         
-        # Copiar PDF para pasta de documentos
-        os.makedirs(os.path.join(PASTA_DOCS_PATH, ano_mes), exist_ok=True)
-        caminho_docs = os.path.join(PASTA_DOCS_PATH, ano_mes, nome_arquivo)
-        try:
-            shutil.copy2(caminho_entrada, caminho_docs)
-        except:
-            pass
-        
-        # Mover PDF para pasta final (apenas se for do ENTRADA_PATH)
+        # Mover PDF para pasta de processados (apenas se for do ENTRADA_PATH)
         if caminho_entrada == os.path.join(ENTRADA_PATH, nome_arquivo):
-            os.makedirs(PASTA_DOCUMENTOS_FINAL, exist_ok=True)
             try:
-                shutil.move(caminho_entrada, os.path.join(PASTA_DOCUMENTOS_FINAL, nome_arquivo))
+                shutil.move(caminho_entrada, os.path.join(GERADAS_PATH, nome_arquivo))
             except:
                 pass
         
@@ -380,13 +374,15 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         resultado["detalhes"] = {
             "remessa": nome_remessa,
             "condominio": cond_info["nome"],
-            "valor": f"R$ {valor:.2f}",
+            "valor": f"R$ {valor_float:.2f}",
             "vencimento": vencimento,
             "cnpj": cnpj_condominio
         }
     
     except Exception as e:
         resultado["mensagem"] = f"Erro ao processar: {str(e)}"
+        import traceback
+        print(traceback.format_exc())
     
     return resultado
 
