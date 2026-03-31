@@ -41,6 +41,10 @@ POSSIBLE_PATHS = [
 TEMP_UPLOAD_PATH = os.path.join(tempfile.gettempdir(), "fedcorp_uploads")
 os.makedirs(TEMP_UPLOAD_PATH, exist_ok=True)
 
+# Pasta para armazenar PDFs processados (no Render)
+DOCS_STORAGE_PATH = os.path.join(os.path.dirname(__file__), "docs")
+os.makedirs(DOCS_STORAGE_PATH, exist_ok=True)
+
 # Dados Fixos para Seguro de Vida (FEDCORP)
 CNPJ_ADMIN = "26231209000150"
 NOME_ADMIN = "GW ADMINISTRADORA DE CONDOMINIOS LTDA"
@@ -255,7 +259,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         cod_cond_erp = cond_info["codigo"].zfill(4)
         nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
         
-        # Copiar PDF para pasta de documentos
+        # Copiar PDF para pasta de documentos (LOCAL)
         ano_atual = agora.strftime("%Y")
         mes_atual = agora.strftime("%m")
         pasta_destino_docs = os.path.join(PASTA_DOCS_PATH, ano_atual, mes_atual)
@@ -263,8 +267,18 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         caminho_pdf_destino = os.path.join(pasta_destino_docs, nome_arquivo)
         try:
             shutil.copy(caminho_entrada, caminho_pdf_destino)
-        except:
-            pass
+        except Exception as e:
+            print(f"Aviso: Não foi possível copiar para pasta local: {e}")
+        
+        # Copiar PDF para pasta de documentos (RENDER)
+        pasta_destino_render = os.path.join(DOCS_STORAGE_PATH, ano_atual, mes_atual)
+        os.makedirs(pasta_destino_render, exist_ok=True)
+        caminho_pdf_render = os.path.join(pasta_destino_render, nome_arquivo)
+        try:
+            shutil.copy(caminho_entrada, caminho_pdf_render)
+            print(f"PDF salvo em: {caminho_pdf_render}")
+        except Exception as e:
+            print(f"Erro ao salvar PDF no Render: {e}")
         
         # Retornar dados processados
         resultado["status"] = "sucesso"
@@ -279,7 +293,9 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "valor_float": valor_float,
             "codigo_barras": codigo_barras,
             "nome_arquivo": nome_arquivo,
-            "caminho_pdf": caminho_pdf_destino
+            "caminho_pdf": caminho_pdf_destino,
+            "ano": ano_atual,
+            "mes": mes_atual
         }
     
     except Exception as e:
@@ -356,14 +372,18 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         linhas.append(fixo(registro_2, 400))
         
         # REGISTRO 3 - TRAILER COM URL DO PDF (um para cada boleto)
-        ano = agora.strftime("%Y")
-        mes = agora.strftime("%m")
+        ano = dados.get("ano", agora.strftime("%Y"))
+        mes = dados.get("mes", agora.strftime("%m"))
         url_pdf = f"https://fedcorp-erp-dashboard.onrender.com/docs/{ano}/{mes}/{dados['nome_arquivo']}"
         
         # Calcular espaços de preenchimento
         tamanho_fixo = 1 + 6 + 6 + 12 + 4  # Tipo + 2 campos + valor + sequencial
         tamanho_url = len(url_pdf)
         tamanho_espacos = 400 - tamanho_fixo - tamanho_url
+        
+        # DEBUG: Log da URL
+        print(f"URL gerada: {url_pdf}")
+        print(f"Arquivo: {dados['nome_arquivo']}, Tamanho URL: {tamanho_url}, Espaços: {tamanho_espacos}")
         
         trailer_boleto = (
             "3" +                                     # 01 - Tipo
@@ -586,11 +606,22 @@ def processar():
 @app.route('/docs/<ano>/<mes>/<arquivo>')
 def servir_documento(ano, mes, arquivo):
     try:
-        caminho = os.path.join(PASTA_DOCS_PATH, ano, mes, arquivo)
-        if os.path.exists(caminho):
-            return send_from_directory(os.path.dirname(caminho), arquivo)
-        return jsonify({"erro": "Arquivo não encontrado"}), 404
+        # Tentar primeiro no Render
+        caminho_render = os.path.join(DOCS_STORAGE_PATH, ano, mes, arquivo)
+        if os.path.exists(caminho_render):
+            print(f"Servindo arquivo do Render: {caminho_render}")
+            return send_from_directory(os.path.dirname(caminho_render), arquivo)
+        
+        # Tentar depois na pasta local
+        caminho_local = os.path.join(PASTA_DOCS_PATH, ano, mes, arquivo)
+        if os.path.exists(caminho_local):
+            print(f"Servindo arquivo local: {caminho_local}")
+            return send_from_directory(os.path.dirname(caminho_local), arquivo)
+        
+        print(f"Arquivo nao encontrado: {caminho_render} ou {caminho_local}")
+        return jsonify({"erro": "Arquivo nao encontrado"}), 404
     except Exception as e:
+        print(f"Erro ao servir documento: {e}")
         return jsonify({"erro": str(e)}), 500
 
 @app.route('/<path:filename>')
