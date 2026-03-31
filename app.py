@@ -309,7 +309,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "000000000,00" +                          # 14 - Descontos (200-211)
             "N" +                                     # 15 - Nota Fiscal S/N (212-212)
             "          " +                            # 16 - Data Emissão NF (213-222) - em branco (sem NF)
-            "0000000000" +                            # 17 - Número NF (223-232) - zeros (sem NF)
+            "          " +                            # 17 - Número NF (223-232) - em branco (sem NF)
             "     " +                                 # 18 - Série NF (233-237) - em branco
             "     " +                                 # 19 - Tipo NF (238-242) - em branco
             " " * 154 +                               # 20-23 - Uso Ahreas (243-396)
