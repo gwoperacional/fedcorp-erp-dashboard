@@ -72,37 +72,45 @@ def fazer_upload_s3(caminho_arquivo):
     try:
         print(f"Iniciando upload S3 para: {caminho_arquivo}")
         
-        # Executar manus-upload-file
+        # Executar manus-upload-file com flag --webdev
         resultado = subprocess.run(
-            ["manus-upload-file", caminho_arquivo],
+            ["manus-upload-file", "--webdev", caminho_arquivo],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=60
         )
         
         print(f"Return code: {resultado.returncode}")
-        print(f"Stdout: {resultado.stdout}")
+        print(f"Stdout completo: {resultado.stdout}")
         print(f"Stderr: {resultado.stderr}")
         
         if resultado.returncode == 0:
             output = resultado.stdout.strip()
             
-            # A saída pode ser: "URL: https://..." ou apenas "https://..."
+            # Procurar por https:// em qualquer linha
             if "https://" in output:
+                # Pegar a última linha que contém https://
                 linhas = output.split("\n")
-                for linha in linhas:
-                    if "https://" in linha:
-                        # Extrair a URL
-                        if "https://" in linha:
-                            idx = linha.find("https://")
-                            url = linha[idx:].strip()
-                            print(f"✅ Upload S3 bem-sucedido: {url}")
-                            return url
+                for linha in reversed(linhas):
+                    linha = linha.strip()
+                    if "https://" in linha and linha.startswith("https://"):
+                        print(f"✅ Upload S3 bem-sucedido: {linha}")
+                        return linha
+                    elif "https://" in linha:
+                        # Extrair a URL da linha
+                        idx = linha.find("https://")
+                        url = linha[idx:].strip()
+                        # Remover caracteres extras no final
+                        url = url.split()[0] if " " in url else url
+                        print(f"✅ Upload S3 bem-sucedido: {url}")
+                        return url
         
         print(f"⚠️ Erro ao fazer upload: {resultado.stderr}")
         return None
     except Exception as e:
         print(f"❌ Erro ao fazer upload S3: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def extrair_dados_pdf(pdf_path):
