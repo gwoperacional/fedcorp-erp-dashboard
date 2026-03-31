@@ -6,7 +6,6 @@ import pdfplumber
 import tempfile
 import json
 import subprocess
-import requests
 from flask import Flask, jsonify, send_from_directory, request, send_file
 from datetime import datetime
 from typing import List, Dict, Any
