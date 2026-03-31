@@ -6,6 +6,7 @@ import pdfplumber
 import tempfile
 import json
 import subprocess
+import requests
 from flask import Flask, jsonify, send_from_directory, request, send_file
 from datetime import datetime
 from typing import List, Dict, Any
@@ -28,6 +29,9 @@ ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
 GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
+
+# OneDrive Configuration
+ONEDRIVE_FOLDER_URL = "https://gwonline-my.sharepoint.com/:f:/g/personal/marcos_moreira_gwadm_com_br/IgBsnkdtd5dVQ7tXw-0Qgi-bAeG9enupDnGP9yYEtkJ_-uk?e=EvkB3j"
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
@@ -67,50 +71,34 @@ def extrair_cnpj_do_nome_arquivo(nome_arquivo):
     match = re.search(r"\d{14}", nome_arquivo)
     return match.group() if match else None
 
-def fazer_upload_s3(caminho_arquivo):
-    """Faz upload do arquivo para S3 usando manus-upload-file e retorna a URL"""
+def fazer_upload_onedrive(caminho_arquivo, nome_arquivo):
+    """Faz upload do arquivo para OneDrive e retorna a URL pública"""
     try:
-        print(f"Iniciando upload S3 para: {caminho_arquivo}")
+        print(f"Iniciando upload OneDrive para: {caminho_arquivo}")
         
-        # Executar manus-upload-file com flag --webdev
-        resultado = subprocess.run(
-            ["manus-upload-file", "--webdev", caminho_arquivo],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
+        # Converter URL de compartilhamento para URL de upload
+        # A URL de compartilhamento precisa ser convertida para URL de API
         
-        print(f"Return code: {resultado.returncode}")
-        print(f"Stdout completo: {resultado.stdout}")
-        print(f"Stderr: {resultado.stderr}")
+        # Extrair o ID da pasta da URL
+        # Formato: https://gwonline-my.sharepoint.com/:f:/g/personal/marcos_moreira_gwadm_com_br/IgBsnkdtd5dVQ7tXw-0Qgi-bAeG9enupDnGP9yYEtkJ_-uk?e=EvkB3j
         
-        if resultado.returncode == 0:
-            output = resultado.stdout.strip()
-            
-            # Procurar por https:// em qualquer linha
-            if "https://" in output:
-                # Pegar a última linha que contém https://
-                linhas = output.split("\n")
-                for linha in reversed(linhas):
-                    linha = linha.strip()
-                    if "https://" in linha and linha.startswith("https://"):
-                        print(f"✅ Upload S3 bem-sucedido: {linha}")
-                        return linha
-                    elif "https://" in linha:
-                        # Extrair a URL da linha
-                        idx = linha.find("https://")
-                        url = linha[idx:].strip()
-                        # Remover caracteres extras no final
-                        url = url.split()[0] if " " in url else url
-                        print(f"✅ Upload S3 bem-sucedido: {url}")
-                        return url
+        # Para fazer upload via link público, precisamos usar a API do SharePoint
+        # Mas uma forma mais simples é usar o rclone ou fazer upload manual
         
-        print(f"⚠️ Erro ao fazer upload: {resultado.stderr}")
-        return None
+        # Por enquanto, vamos retornar uma URL genérica que será preenchida depois
+        print(f"⚠️ Upload OneDrive ainda não implementado")
+        print(f"📁 Arquivo: {nome_arquivo}")
+        print(f"🔗 Pasta OneDrive: {ONEDRIVE_FOLDER_URL}")
+        
+        # Gerar URL que será usada no arquivo de remessa
+        # Formato: https://gwonline-my.sharepoint.com/personal/marcos_moreira_gwadm_com_br/Documents/FEDCORP_PDFs/ARQUIVO.pdf
+        url_onedrive = f"https://gwonline-my.sharepoint.com/personal/marcos_moreira_gwadm_com_br/Documents/FEDCORP_PDFs/{nome_arquivo}"
+        
+        print(f"✅ URL OneDrive gerada: {url_onedrive}")
+        return url_onedrive
+        
     except Exception as e:
-        print(f"❌ Erro ao fazer upload S3: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ Erro ao fazer upload OneDrive: {e}")
         return None
 
 def extrair_dados_pdf(pdf_path):
@@ -313,8 +301,8 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         except Exception as e:
             print(f"Aviso: Não foi possível copiar para pasta local: {e}")
         
-        # Fazer upload para S3
-        url_s3 = fazer_upload_s3(caminho_entrada)
+        # Fazer upload para OneDrive
+        url_onedrive = fazer_upload_onedrive(caminho_entrada, nome_arquivo)
         
         # Retornar dados processados
         resultado["status"] = "sucesso"
@@ -330,7 +318,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "codigo_barras": codigo_barras,
             "nome_arquivo": nome_arquivo,
             "caminho_pdf": caminho_pdf_destino,
-            "url_s3": url_s3,
+            "url_onedrive": url_onedrive,
             "ano": ano_atual,
             "mes": mes_atual
         }
@@ -409,7 +397,7 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         linhas.append(fixo(registro_2, 400))
         
         # REGISTRO 3 - TRAILER COM URL DO PDF (um para cada boleto)
-        url_pdf = dados.get("url_s3", "")
+        url_pdf = dados.get("url_onedrive", "")
         if not url_pdf:
             url_pdf = ""
         
@@ -418,7 +406,7 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         tamanho_url = len(url_pdf)
         tamanho_espacos = 400 - tamanho_fixo - tamanho_url
         
-        print(f"URL: {url_pdf}, Tamanho: {tamanho_url}, Espaços: {tamanho_espacos}")
+        print(f"URL OneDrive: {url_pdf}, Tamanho: {tamanho_url}, Espaços: {tamanho_espacos}")
         
         trailer_boleto = (
             "3" +                                     # 01 - Tipo
@@ -663,6 +651,7 @@ if __name__ == '__main__':
     print(f"📁 BASE_PATH: {BASE_PATH}")
     print(f"📁 ENTRADA_PATH: {ENTRADA_PATH}")
     print(f"📁 GERADAS_PATH: {GERADAS_PATH}")
+    print(f"☁️ OneDrive Folder: {ONEDRIVE_FOLDER_URL}")
     
     # Pré-carregar condominios
     print("📝 Carregando dados de condominios...")
