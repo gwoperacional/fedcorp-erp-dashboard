@@ -159,8 +159,9 @@ def carregar_condominios():
             wb = load_workbook(arquivo_encontrado)
             ws = wb.active
             for row in ws.iter_rows(min_row=2, values_only=True):
-                if row[0]:  # CNPJ na coluna A
-                    cnpj = str(row[0]).strip()
+                # Estrutura: COD(0), CONDOMINIO(1), GESTAO(2), CNPJ(3)
+                if row[3]:  # CNPJ na coluna D (índice 3)
+                    cnpj = str(row[3]).strip()
                     # Remover pontos e barras se houver
                     cnpj = cnpj.replace(".", "").replace("-", "").replace("/", "")
                     # Garantir 14 dígitos
@@ -169,7 +170,7 @@ def carregar_condominios():
                     
                     condominios[cnpj] = {
                         "nome": str(row[1]) if row[1] else "",
-                        "codigo": str(row[2]).zfill(4) if row[2] else "0000"
+                        "codigo": str(int(row[0])).zfill(4) if row[0] else "0000"
                     }
             print(f"✅ Carregados {len(condominios)} condominios do arquivo")
         except Exception as e:
