@@ -355,22 +355,28 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         )
         linhas.append(fixo(registro_2, 400))
         
+        # REGISTRO 3 - TRAILER COM URL DO PDF (um para cada boleto)
+        ano = agora.strftime("%Y")
+        mes = agora.strftime("%m")
+        url_pdf = f"https://fedcorp-erp-dashboard.onrender.com/docs/{ano}/{mes}/{dados['nome_arquivo']}"
+        
+        # Calcular espaços de preenchimento
+        tamanho_fixo = 1 + 6 + 6 + 12 + 4  # Tipo + 2 campos + valor + sequencial
+        tamanho_url = len(url_pdf)
+        tamanho_espacos = 400 - tamanho_fixo - tamanho_url
+        
+        trailer_boleto = (
+            "3" +                                     # 01 - Tipo
+            "000001" +                                # 02 - Sequencial de registros
+            "000001" +                                # 03 - Total de títulos
+            dados["valor_formatado"] +                # 04 - Valor Total
+            url_pdf +                                 # 05 - URL do PDF
+            " " * max(0, tamanho_espacos) +           # Espaços de preenchimento
+            str(sequencial).zfill(4)                  # 06 - Sequencial
+        )
+        linhas.append(fixo(trailer_boleto, 400))
+        
         sequencial += 1
-    
-    # REGISTRO 3 - TRAILER
-    total_registros = len(linhas) + 1  # +1 para o trailer
-    total_valor = sum(float(d["valor_float"]) for d in lista_dados)
-    valor_total_formatado = formatar_valor_ahreas(total_valor)
-    
-    trailer = (
-        "3" +                                         # 01 - Tipo
-        str(total_registros).zfill(6) +               # 02 - Total de Registros
-        str(len(lista_dados)).zfill(6) +              # 03 - Total de Títulos
-        valor_total_formatado +                       # 04 - Valor Total
-        " " * 367 +                                   # 05 - Uso Ahreas
-        "0001"                                        # 06 - Sequencial
-    )
-    linhas.append(fixo(trailer, 400))
     
     return "\n".join(linhas)
 
