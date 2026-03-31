@@ -307,11 +307,11 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "000000000,00" +                          # 12 - INSS (176-187)
             "000000000,00" +                          # 13 - CSSL (188-199)
             "000000000,00" +                          # 14 - Descontos (200-211)
-            "N" +                                     # 15 - Nota Fiscal (212-212)
-            data_emissao +                            # 16 - Data Emissão (213-222)
-            num_nota +                                # 17 - Número Nota (223-232)
-            "     " +                                 # 18 - Série (233-237)
-            "     " +                                 # 19 - Tipo Nota (238-242)
+            "N" +                                     # 15 - Nota Fiscal S/N (212-212)
+            "          " +                            # 16 - Data Emissão NF (213-222) - em branco (sem NF)
+            "0000000000" +                            # 17 - Número NF (223-232) - zeros (sem NF)
+            "     " +                                 # 18 - Série NF (233-237) - em branco
+            "     " +                                 # 19 - Tipo NF (238-242) - em branco
             " " * 154 +                               # 20-23 - Uso Ahreas (243-396)
             str(sequencial).zfill(4)                  # 24 - Sequencial (397-400)
         )
