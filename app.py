@@ -5,6 +5,7 @@ import re
 import pdfplumber
 import tempfile
 import json
+import subprocess
 from flask import Flask, jsonify, send_from_directory, request, send_file
 from datetime import datetime
 from typing import List, Dict, Any
@@ -41,10 +42,6 @@ POSSIBLE_PATHS = [
 TEMP_UPLOAD_PATH = os.path.join(tempfile.gettempdir(), "fedcorp_uploads")
 os.makedirs(TEMP_UPLOAD_PATH, exist_ok=True)
 
-# Pasta para armazenar PDFs processados (no Render)
-DOCS_STORAGE_PATH = os.path.join(os.path.dirname(__file__), "docs")
-os.makedirs(DOCS_STORAGE_PATH, exist_ok=True)
-
 # Dados Fixos para Seguro de Vida (FEDCORP)
 CNPJ_ADMIN = "26231209000150"
 NOME_ADMIN = "GW ADMINISTRADORA DE CONDOMINIOS LTDA"
@@ -69,6 +66,44 @@ def fixo(texto, tamanho):
 def extrair_cnpj_do_nome_arquivo(nome_arquivo):
     match = re.search(r"\d{14}", nome_arquivo)
     return match.group() if match else None
+
+def fazer_upload_s3(caminho_arquivo):
+    """Faz upload do arquivo para S3 usando manus-upload-file e retorna a URL"""
+    try:
+        print(f"Iniciando upload S3 para: {caminho_arquivo}")
+        
+        # Executar manus-upload-file
+        resultado = subprocess.run(
+            ["manus-upload-file", caminho_arquivo],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        print(f"Return code: {resultado.returncode}")
+        print(f"Stdout: {resultado.stdout}")
+        print(f"Stderr: {resultado.stderr}")
+        
+        if resultado.returncode == 0:
+            output = resultado.stdout.strip()
+            
+            # A saída pode ser: "URL: https://..." ou apenas "https://..."
+            if "https://" in output:
+                linhas = output.split("\n")
+                for linha in linhas:
+                    if "https://" in linha:
+                        # Extrair a URL
+                        if "https://" in linha:
+                            idx = linha.find("https://")
+                            url = linha[idx:].strip()
+                            print(f"✅ Upload S3 bem-sucedido: {url}")
+                            return url
+        
+        print(f"⚠️ Erro ao fazer upload: {resultado.stderr}")
+        return None
+    except Exception as e:
+        print(f"❌ Erro ao fazer upload S3: {e}")
+        return None
 
 def extrair_dados_pdf(pdf_path):
     dados = {"linha_digitavel": None, "numero_nota": None, "vencimento": None, "valor": None}
@@ -270,15 +305,8 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         except Exception as e:
             print(f"Aviso: Não foi possível copiar para pasta local: {e}")
         
-        # Copiar PDF para pasta de documentos (RENDER)
-        pasta_destino_render = os.path.join(DOCS_STORAGE_PATH, ano_atual, mes_atual)
-        os.makedirs(pasta_destino_render, exist_ok=True)
-        caminho_pdf_render = os.path.join(pasta_destino_render, nome_arquivo)
-        try:
-            shutil.copy(caminho_entrada, caminho_pdf_render)
-            print(f"PDF salvo em: {caminho_pdf_render}")
-        except Exception as e:
-            print(f"Erro ao salvar PDF no Render: {e}")
+        # Fazer upload para S3
+        url_s3 = fazer_upload_s3(caminho_entrada)
         
         # Retornar dados processados
         resultado["status"] = "sucesso"
@@ -294,6 +322,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "codigo_barras": codigo_barras,
             "nome_arquivo": nome_arquivo,
             "caminho_pdf": caminho_pdf_destino,
+            "url_s3": url_s3,
             "ano": ano_atual,
             "mes": mes_atual
         }
@@ -329,7 +358,7 @@ def gerar_remessa_lote(lista_dados, competencia=None):
     )
     linhas.append(fixo(header, 400))
     
-    # REGISTROS 1 e 2 para cada boleto
+    # REGISTROS 1, 2 e 3 para cada boleto
     sequencial = 2
     for dados in lista_dados:
         # REGISTRO 1 - DETALHE NF
@@ -372,18 +401,16 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         linhas.append(fixo(registro_2, 400))
         
         # REGISTRO 3 - TRAILER COM URL DO PDF (um para cada boleto)
-        ano = dados.get("ano", agora.strftime("%Y"))
-        mes = dados.get("mes", agora.strftime("%m"))
-        url_pdf = f"https://fedcorp-erp-dashboard.onrender.com/docs/{ano}/{mes}/{dados['nome_arquivo']}"
+        url_pdf = dados.get("url_s3", "")
+        if not url_pdf:
+            url_pdf = ""
         
         # Calcular espaços de preenchimento
         tamanho_fixo = 1 + 6 + 6 + 12 + 4  # Tipo + 2 campos + valor + sequencial
         tamanho_url = len(url_pdf)
         tamanho_espacos = 400 - tamanho_fixo - tamanho_url
         
-        # DEBUG: Log da URL
-        print(f"URL gerada: {url_pdf}")
-        print(f"Arquivo: {dados['nome_arquivo']}, Tamanho URL: {tamanho_url}, Espaços: {tamanho_espacos}")
+        print(f"URL: {url_pdf}, Tamanho: {tamanho_url}, Espaços: {tamanho_espacos}")
         
         trailer_boleto = (
             "3" +                                     # 01 - Tipo
@@ -606,22 +633,11 @@ def processar():
 @app.route('/docs/<ano>/<mes>/<arquivo>')
 def servir_documento(ano, mes, arquivo):
     try:
-        # Tentar primeiro no Render
-        caminho_render = os.path.join(DOCS_STORAGE_PATH, ano, mes, arquivo)
-        if os.path.exists(caminho_render):
-            print(f"Servindo arquivo do Render: {caminho_render}")
-            return send_from_directory(os.path.dirname(caminho_render), arquivo)
-        
-        # Tentar depois na pasta local
-        caminho_local = os.path.join(PASTA_DOCS_PATH, ano, mes, arquivo)
-        if os.path.exists(caminho_local):
-            print(f"Servindo arquivo local: {caminho_local}")
-            return send_from_directory(os.path.dirname(caminho_local), arquivo)
-        
-        print(f"Arquivo nao encontrado: {caminho_render} ou {caminho_local}")
-        return jsonify({"erro": "Arquivo nao encontrado"}), 404
+        caminho = os.path.join(PASTA_DOCS_PATH, ano, mes, arquivo)
+        if os.path.exists(caminho):
+            return send_from_directory(os.path.dirname(caminho), arquivo)
+        return jsonify({"erro": "Arquivo não encontrado"}), 404
     except Exception as e:
-        print(f"Erro ao servir documento: {e}")
         return jsonify({"erro": str(e)}), 500
 
 @app.route('/<path:filename>')
