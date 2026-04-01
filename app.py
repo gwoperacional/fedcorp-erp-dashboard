@@ -14,6 +14,17 @@ from werkzeug.utils import secure_filename
 from io import BytesIO
 import zipfile
 
+# Google Drive API
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    GOOGLE_API_AVAILABLE = True
+except ImportError:
+    GOOGLE_API_AVAILABLE = False
+    print("⚠️ Google API client não instalado. Instalando...")
+    subprocess.run(["pip", "install", "-q", "google-auth-oauthlib", "google-auth-httplib2", "google-api-python-client"], check=False)
+
 # Configurar o caminho correto para os arquivos estáticos
 static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
 if not os.path.exists(static_folder):
@@ -30,18 +41,27 @@ NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 
 # Google Drive Configuration
-GOOGLE_DRIVE_FOLDER_ID = "1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv"  # ID extraído do link
-GOOGLE_DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv?usp=sharing"
-
-# Remover referências ao SharePoint
-# SHAREPOINT_FOLDER_URL = "https://gwonline-my.sharepoint.com/:f:/g/personal/marcos_moreira_gwadm_com_br/IgBsnkdtd5dVQ7tXw-0Qgi-bAeG9enupDnGP9yYEtkJ_-uk?e=EvkB3j"
+GOOGLE_DRIVE_FOLDER_ID = "1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv"
+GOOGLE_DRIVE_CREDENTIALS = {
+    "type": "service_account",
+    "project_id": "fedcorp-dashboard",
+    "private_key_id": "639e51866beca0e27781366862ec4b687a823fd4",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDWBHU5cWKMqZg+\nQuHCfEIgMrqsO8877sBjRMbv34rPLKufIgGia1d/QXZ7oOn4B/HPg+adZQLd9coL\nX1mu6G2qHV7i7mDpYmOzWylUKqsgp8cUv7TpuZz36JEQVOjyLO+H1aarghCV08sn\ndlfqnRqawyt4H2FpUR8ubzgaHNP/t0+fYlqc6GkGCktndQo/toDzytPYzNXIb30I\nWCX5pcMpd2cLS1OBebRrqrJsYqtFvxOl8GdYrBwv6KVwm1hp+1qyMs/nkZ31xU7u\n3Q4nJ0U7ApnIy7JuKhgcdrhNuQJV+fQ0OiR/p3heQmgYHZz/qwVP30BZcWuF9ibP\nfBioSJ75AgMBAAECggEAQ0k2g79asQe3Bkgny2oerhnU58aMEncvRGaAtzTMYvNT\n592crvBZm3g85ISEWsdAprH9BNoXqyoWAjpRq3SG2feO+ADjNi0JVH/iQASENemZ\n5TOakOsa5zRWu1A+xrkK++VXl892IGzsj7Uc0fXfwe1/kq4nBaIMECDGfis3Gct4\ni8+8rryNYZLfbmQ8rmuyvTnUp/F43TtF5gpcd8KgbDkjDFcm+uIBPiW+cm1yv01q\nJVGt8g0oZPFJPBjonweGNzyds9FM6bZiUh2ZPs4YQznJdjoWR6iWa2NsLynl5KcA\nEjk6eWMusK+0JwBlL3fyMqkA8RSkSTL67M8xjK4lawKBgQDse9ATBfxqeyCIiBkR\nVFsELr1T6TferopbTIX81nd4WTsLqrryBKBc+XegSE3wGkZtNyy8wJadFT+rsKwW\np0nVck/NDv1Qd+5ILc1YDa5RZrXD80ySFe9+fg4Lx5IWIVBrTUZa8P5l37tMPsdc\nkhX8CVGUCyVMhP62DhBQ3jfXjwKBgQDnrgBXhjVA9MEIo4og2xn4nig1JkqdBwVE\nG7jiDJ9+2u0hAd/mT6FckCYa0TrNwonVdNX6DUn3OQEsuPs4C5xgkbwsSE5rHIDB\ntIUWR01Xe2PX0/L6baZ8q4mMVMazXo1711yw3k/QWq2jmja8E/zYyawsg04pDqFT\nLO2xQ+wc9wKBgQDprvuRINQqgJtIb3yd9EawXmN2XLp50O4lg/vPOjr6cOp4//AW\nId45ocbFW02w2rYHTINnzcPHW+z8Auw6wnqicoBK+On2r1yGdMQ6o+JCzAUHqg9b\nOFPeIkBNAZvpRGhMcCL60LQDBU/26v5kCnOxB6BWc6Ea+T0dt84Fq2FxHwKBgQC7\ncB06sowXN22NLbKtDlaevGZPSeGH1Yw/JCaaTBgmK705vSiGTtp/5ufNPoXSvpeB\nKPuNSH8VEvuOUUJ+f3ZO8tlJAl7fbboF/aTG93ztUBjhHsswLNJLfwTTkisIJ3FU\nRlLpjZMJQLPG7xdlZs5kHhW8FaeAtCN1BZ5wkkFO1QKBgHcKhaNg3dZbZl7dNf2A\npmgKicG5D3QdBqgJJeWpYGQGfJjmdE0Nl0rCzvxDmjunsfEOR+Gpv5JdB4r4FkA+\n4MXnwaZHrV/EbVxa+dkpt/2OpoVFaDsYn/L+wAqaiBKWHUFHagICYpqf6Jy7Tm4c\np0XxpIRacyqnvNufYIVRutg5\n-----END PRIVATE KEY-----\n",
+    "client_email": "fedcorp-uploader@fedcorp-dashboard.iam.gserviceaccount.com",
+    "client_id": "108990766178617167931",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/fedcorp-uploader%40fedcorp-dashboard.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+}
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
     os.path.join(BASE_PATH, "BASE", "DADOS_CONDOMINIOS.xlsx"),
     os.path.join(os.path.dirname(__file__), "BASE", "DADOS_CONDOMINIOS.xlsx"),
     os.path.join(os.path.dirname(__file__), "DADOS_CONDOMINIOS.xlsx"),
-    "/app/BASE/DADOS_CONDOMINIOS.xlsx",  # Render path
+    "/app/BASE/DADOS_CONDOMINIOS.xlsx",
     "BASE/DADOS_CONDOMINIOS.xlsx",
 ]
 
@@ -62,6 +82,69 @@ DESC_PRODUTO_ERP = ""
 CONDOMINIOS_CACHE = None
 CACHE_TIMESTAMP = None
 
+# Google Drive Service
+DRIVE_SERVICE = None
+
+def inicializar_google_drive():
+    """Inicializa o serviço Google Drive"""
+    global DRIVE_SERVICE
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            GOOGLE_DRIVE_CREDENTIALS,
+            scopes=['https://www.googleapis.com/auth/drive']
+        )
+        DRIVE_SERVICE = build('drive', 'v3', credentials=credentials)
+        print("✅ Google Drive API inicializado com sucesso")
+        return True
+    except Exception as e:
+        print(f"❌ Erro ao inicializar Google Drive API: {e}")
+        return False
+
+def fazer_upload_google_drive(caminho_arquivo, nome_arquivo):
+    """Faz upload do arquivo para Google Drive e retorna a URL pública"""
+    try:
+        if DRIVE_SERVICE is None:
+            print("⚠️ Google Drive não inicializado")
+            return None
+        
+        print(f"📤 Iniciando upload para Google Drive: {nome_arquivo}")
+        
+        # Preparar arquivo para upload
+        file_metadata = {'name': nome_arquivo, 'parents': [GOOGLE_DRIVE_FOLDER_ID]}
+        media = MediaFileUpload(caminho_arquivo, mimetype='application/pdf')
+        
+        # Fazer upload
+        file = DRIVE_SERVICE.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, webViewLink, webContentLink'
+        ).execute()
+        
+        file_id = file.get('id')
+        web_view_link = file.get('webViewLink')
+        
+        print(f"✅ Upload bem-sucedido!")
+        print(f"📄 File ID: {file_id}")
+        print(f"🔗 URL: {web_view_link}")
+        
+        # Tornar arquivo público (opcional, mas útil)
+        try:
+            DRIVE_SERVICE.permissions().create(
+                fileId=file_id,
+                body={'type': 'anyone', 'role': 'reader'}
+            ).execute()
+            print(f"✅ Arquivo compartilhado publicamente")
+        except:
+            print(f"⚠️ Não foi possível compartilhar publicamente")
+        
+        return web_view_link
+    
+    except Exception as e:
+        print(f"❌ Erro ao fazer upload Google Drive: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 def remover_acentos(texto):
     if not texto: return ""
     return unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("ASCII")
@@ -74,51 +157,6 @@ def extrair_cnpj_do_nome_arquivo(nome_arquivo):
     match = re.search(r"\d{14}", nome_arquivo)
     return match.group() if match else None
 
-def fazer_upload_google_drive(caminho_arquivo, nome_arquivo):
-    """Faz upload do arquivo para Google Drive usando rclone e retorna a URL pública"""
-    try:
-        print(f"Iniciando upload Google Drive para: {caminho_arquivo}")
-        
-        # Tentar usar rclone para fazer upload
-        # Primeiro, precisamos verificar se rclone está instalado
-        try:
-            resultado = subprocess.run(["rclone", "--version"], capture_output=True, text=True, timeout=5)
-            if resultado.returncode != 0:
-                print("⚠️ rclone não está instalado")
-                return None
-        except:
-            print("⚠️ rclone não encontrado")
-            return None
-        
-        # Usar rclone para fazer upload
-        # Formato: rclone copy /caminho/arquivo "gdrive:ID_PASTA/arquivo"
-        resultado = subprocess.run(
-            ["rclone", "copy", caminho_arquivo, f"gdrive:{GOOGLE_DRIVE_FOLDER_ID}/"],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        print(f"Return code: {resultado.returncode}")
-        print(f"Stdout: {resultado.stdout}")
-        print(f"Stderr: {resultado.stderr}")
-        
-        if resultado.returncode == 0:
-            # Gerar URL do Google Drive
-            # Formato: https://drive.google.com/file/d/FILE_ID/view
-            # Por enquanto, vamos retornar uma URL genérica
-            url_google_drive = f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
-            print(f"✅ Upload Google Drive bem-sucedido")
-            print(f"📁 Arquivo salvo em: {url_google_drive}")
-            return url_google_drive
-        else:
-            print(f"⚠️ Erro ao fazer upload: {resultado.stderr}")
-            return None
-    
-    except Exception as e:
-        print(f"❌ Erro ao fazer upload Google Drive: {e}")
-        return None
-
 def extrair_dados_pdf(pdf_path):
     dados = {"linha_digitavel": None, "numero_nota": None, "vencimento": None, "valor": None}
     try:
@@ -128,7 +166,7 @@ def extrair_dados_pdf(pdf_path):
                 t = pagina.extract_text()
                 if t: texto_completo += t + "\n"
             
-            # Extrair linha digitável com regex flexível
+            # Extrair linha digitável
             regex_linha = r"\d{5}[\.\s]?\d{5}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d[\.\s]?\d{14}"
             match_linha = re.search(regex_linha, texto_completo)
             if match_linha:
@@ -139,12 +177,11 @@ def extrair_dados_pdf(pdf_path):
             if match_nota:
                 dados["numero_nota"] = match_nota.group(1)
             
-            # Extrair vencimento - procurar por "Vencimento" primeiro
+            # Extrair vencimento
             match_venc = re.search(r"Vencimento\s+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
             if match_venc:
                 dados["vencimento"] = match_venc.group(1)
             else:
-                # Fallback: procurar por "ATE O VENCIMENTO"
                 match_venc = re.search(r"ATE O VENCIMENTO\s+(\d{2}/\d{2}/\d{4})", texto_completo)
                 if match_venc:
                     dados["vencimento"] = match_venc.group(1)
@@ -159,10 +196,9 @@ def extrair_dados_pdf(pdf_path):
     return dados
 
 def linha_digitavel_para_codigo_barras(linha):
-    """Converte linha digitável para código de barras usando algoritmo correto"""
+    """Converte linha digitável para código de barras"""
     linha = re.sub(r"\D", "", linha)
     
-    # Aceitar 47 ou 50 caracteres
     if len(linha) == 50:
         linha = linha[:47]
     
@@ -184,14 +220,13 @@ def linha_digitavel_para_codigo_barras(linha):
         return None
 
 def formatar_valor_ahreas(valor_float):
-    """Formata valor para 12 posições com vírgula: 000000000,00"""
+    """Formata valor para 12 posições com vírgula"""
     return f"{valor_float:012.2f}".replace(".", ",")
 
 def carregar_condominios():
-    """Carrega condominios de arquivo Excel com fallback para dados embutidos"""
+    """Carrega condominios de arquivo Excel"""
     global CONDOMINIOS_CACHE, CACHE_TIMESTAMP
     
-    # Usar cache se disponível (válido por 5 minutos)
     if CONDOMINIOS_CACHE is not None:
         if CACHE_TIMESTAMP and (datetime.now() - CACHE_TIMESTAMP).seconds < 300:
             return CONDOMINIOS_CACHE
@@ -199,25 +234,20 @@ def carregar_condominios():
     condominios = {}
     arquivo_encontrado = None
     
-    # Tentar encontrar o arquivo em vários caminhos
     for caminho in POSSIBLE_PATHS:
         if os.path.exists(caminho):
             arquivo_encontrado = caminho
             print(f"✅ Arquivo de condominios encontrado em: {caminho}")
             break
     
-    # Se encontrou o arquivo, carrega
     if arquivo_encontrado:
         try:
             wb = load_workbook(arquivo_encontrado)
             ws = wb.active
             for row in ws.iter_rows(min_row=2, values_only=True):
-                # Estrutura: COD(0), CONDOMINIO(1), GESTAO(2), CNPJ(3)
-                if row[3]:  # CNPJ na coluna D (índice 3)
+                if row[3]:
                     cnpj = str(row[3]).strip()
-                    # Remover pontos e barras se houver
                     cnpj = cnpj.replace(".", "").replace("-", "").replace("/", "")
-                    # Garantir 14 dígitos
                     if len(cnpj) >= 14:
                         cnpj = cnpj[:14]
                     
@@ -225,17 +255,13 @@ def carregar_condominios():
                         "nome": str(row[1]) if row[1] else "",
                         "codigo": str(int(row[0])).zfill(4) if row[0] else "0000"
                     }
-            print(f"✅ Carregados {len(condominios)} condominios do arquivo")
+            print(f"✅ Carregados {len(condominios)} condominios")
         except Exception as e:
-            print(f"⚠️ Erro ao carregar arquivo de condominios: {e}")
-            print("Usando dados embutidos como fallback...")
+            print(f"⚠️ Erro ao carregar: {e}")
     else:
-        print("⚠️ Arquivo de condominios não encontrado em nenhum caminho")
-        print("Usando dados embutidos como fallback...")
+        print("⚠️ Arquivo não encontrado, usando dados embutidos")
     
-    # Se não conseguiu carregar do arquivo, usa dados embutidos (fallback)
     if not condominios:
-        print("📝 Carregando dados embutidos de condominios...")
         condominios = {
             "65169906000180": {
                 "nome": "CONDOMINIO EDIFICIO GROPIUS",
@@ -243,14 +269,13 @@ def carregar_condominios():
             }
         }
     
-    # Cachear os dados
     CONDOMINIOS_CACHE = condominios
     CACHE_TIMESTAMP = datetime.now()
     
     return condominios
 
 def processar_arquivo(nome_arquivo, caminho_entrada=None):
-    """Processa um arquivo PDF e retorna dados para remessa"""
+    """Processa um arquivo PDF"""
     resultado = {
         "arquivo": nome_arquivo,
         "status": "erro",
@@ -263,19 +288,18 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             caminho_entrada = os.path.join(ENTRADA_PATH, nome_arquivo)
         
         if not os.path.exists(caminho_entrada):
-            resultado["mensagem"] = f"Arquivo não encontrado: {nome_arquivo}"
+            resultado["mensagem"] = f"Arquivo não encontrado"
             return resultado
         
-        # Extrair CNPJ do nome do arquivo
+        # Extrair CNPJ
         cnpj_condominio = extrair_cnpj_do_nome_arquivo(nome_arquivo)
         if not cnpj_condominio:
-            resultado["mensagem"] = "CNPJ não encontrado no nome do arquivo"
+            resultado["mensagem"] = "CNPJ não encontrado no nome"
             return resultado
         
-        # Carregar dados de condominios
+        # Carregar condominios
         condominios = carregar_condominios()
         
-        # Tentar com CNPJ original e também sem formatação
         if cnpj_condominio not in condominios:
             cnpj_limpo = cnpj_condominio.replace(".", "").replace("-", "").replace("/", "")
             if len(cnpj_limpo) >= 14:
@@ -290,7 +314,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         # Extrair dados do PDF
         dados_pdf = extrair_dados_pdf(caminho_entrada)
         if not dados_pdf["linha_digitavel"]:
-            resultado["mensagem"] = "Não foi possível extrair a linha digitável do PDF"
+            resultado["mensagem"] = "Não foi possível extrair a linha digitável"
             return resultado
         
         # Converter para código de barras
@@ -299,7 +323,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             resultado["mensagem"] = "Código de barras inválido"
             return resultado
         
-        # Preparar dados para arquivo de remessa
+        # Preparar dados
         agora = datetime.now()
         vencimento = dados_pdf["vencimento"] if dados_pdf["vencimento"] else agora.strftime("%d/%m/%Y")
         data_emissao = agora.strftime("%d/%m/%Y")
@@ -308,7 +332,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         cod_cond_erp = cond_info["codigo"].zfill(4)
         nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
         
-        # Copiar PDF para pasta de documentos (LOCAL)
+        # Copiar para pasta local
         ano_atual = agora.strftime("%Y")
         mes_atual = agora.strftime("%m")
         pasta_destino_docs = os.path.join(PASTA_DOCS_PATH, ano_atual, mes_atual)
@@ -322,13 +346,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         # Fazer upload para Google Drive
         url_google_drive = fazer_upload_google_drive(caminho_entrada, nome_arquivo)
         
-        # Usar URL do Google Drive
-        if url_google_drive:
-            url_arquivo = GOOGLE_DRIVE_FOLDER_URL
-        else:
-            url_arquivo = GOOGLE_DRIVE_FOLDER_URL  # Usar URL da pasta como fallback
-        
-        # Retornar dados processados
+        # Retornar dados
         resultado["status"] = "sucesso"
         resultado["mensagem"] = "Arquivo processado com sucesso"
         resultado["dados"] = {
@@ -342,7 +360,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "codigo_barras": codigo_barras,
             "nome_arquivo": nome_arquivo,
             "caminho_pdf": caminho_pdf_destino,
-            "url_google_drive": url_arquivo,
+            "url_google_drive": url_google_drive if url_google_drive else "",
             "ano": ano_atual,
             "mes": mes_atual
         }
@@ -355,7 +373,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
     return resultado
 
 def gerar_remessa_lote(lista_dados, competencia=None):
-    """Gera um arquivo de remessa único com múltiplos registros"""
+    """Gera remessa única com múltiplos registros"""
     if not lista_dados:
         return None
     
@@ -367,79 +385,76 @@ def gerar_remessa_lote(lista_dados, competencia=None):
     
     # REGISTRO 0 - HEADER
     header = (
-        "0" +                                         # 01 - Tipo Registro
-        FORNECEDOR_CNPJ.zfill(14) +                   # 02 - CNPJ Fornecedor
-        fixo(remover_acentos(FORNECEDOR_NOME).upper(), 60) + # 03 - Nome Fornecedor
-        CNPJ_ADMIN.zfill(14) +                        # 04 - CNPJ Administradora
-        fixo(remover_acentos(NOME_ADMIN).upper(), 60) + # 05 - Nome Administradora
-        competencia +                                 # 06 - Mês/Ano Referência
-        " " * 241 +                                   # 07 - Uso Ahreas
-        "0001"                                        # 08 - Sequencial
+        "0" +
+        FORNECEDOR_CNPJ.zfill(14) +
+        fixo(remover_acentos(FORNECEDOR_NOME).upper(), 60) +
+        CNPJ_ADMIN.zfill(14) +
+        fixo(remover_acentos(NOME_ADMIN).upper(), 60) +
+        competencia +
+        " " * 241 +
+        "0001"
     )
     linhas.append(fixo(header, 400))
     
     # REGISTROS 1, 2 e 3 para cada boleto
     sequencial = 2
     for dados in lista_dados:
-        # REGISTRO 1 - DETALHE NF
+        # REGISTRO 1
         registro_1 = (
-            "1" +                                     # 01 - Tipo
-            dados["cod_cond"] +                       # 02 - Cod Condomínio
-            "    " +                                  # 03 - Espaços
-            dados["cnpj"].zfill(14) +                 # 04 - CNPJ Condomínio
-            dados["nome_cond"] +                      # 05 - Nome Condomínio
-            dados["vencimento"] +                     # 06 - Vencimento
-            dados["valor_formatado"] +                # 07 - Valor
-            dados["codigo_barras"] +                  # 08 - Código de Barras
-            dados["valor_formatado"] +                # 09 - Valor Total
-            "000000000,00" +                          # 10 - IRRF
-            "000000000,00" +                          # 11 - ISS
-            "000000000,00" +                          # 12 - INSS
-            "000000000,00" +                          # 13 - CSSL
-            "000000000,00" +                          # 14 - Descontos
-            "N" +                                     # 15 - Nota Fiscal S/N
-            "          " +                            # 16 - Data Emissão NF
-            "          " +                            # 17 - Número NF
-            "     " +                                 # 18 - Série NF
-            "     " +                                 # 19 - Tipo NF
-            " " * 154 +                               # 20-23 - Uso Ahreas
-            str(sequencial).zfill(4)                  # 24 - Sequencial
+            "1" +
+            dados["cod_cond"] +
+            "    " +
+            dados["cnpj"].zfill(14) +
+            dados["nome_cond"] +
+            dados["vencimento"] +
+            dados["valor_formatado"] +
+            dados["codigo_barras"] +
+            dados["valor_formatado"] +
+            "000000000,00" +
+            "000000000,00" +
+            "000000000,00" +
+            "000000000,00" +
+            "000000000,00" +
+            "N" +
+            "          " +
+            "          " +
+            "     " +
+            "     " +
+            " " * 154 +
+            str(sequencial).zfill(4)
         )
         linhas.append(fixo(registro_1, 400))
         
-        # REGISTRO 2 - DETALHE ITENS
+        # REGISTRO 2
         registro_2 = (
-            "2" +                                     # 01 - Tipo
-            fixo(COD_PRODUTO_ERP, 10) +               # 02 - Cod Produto
-            fixo(DESC_PRODUTO_ERP, 60) +              # 03 - Descrição
-            "000000000,00" +                          # 04 - Valor Item Prod
-            dados["valor_formatado"] +                # 05 - Valor Item Serv
-            dados["valor_formatado"] +                # 06 - Valor Total Item
-            " " * 289 +                               # 07 - Uso Ahreas
-            str(sequencial).zfill(4)                  # 08 - Sequencial
+            "2" +
+            fixo(COD_PRODUTO_ERP, 10) +
+            fixo(DESC_PRODUTO_ERP, 60) +
+            "000000000,00" +
+            dados["valor_formatado"] +
+            dados["valor_formatado"] +
+            " " * 289 +
+            str(sequencial).zfill(4)
         )
         linhas.append(fixo(registro_2, 400))
         
-        # REGISTRO 3 - TRAILER COM URL DO PDF (um para cada boleto)
+        # REGISTRO 3 com URL
         url_pdf = dados.get("url_google_drive", "")
         if not url_pdf:
             url_pdf = ""
         
-        # Calcular espaços de preenchimento
-        tamanho_fixo = 1 + 6 + 6 + 12 + 4  # Tipo + 2 campos + valor + sequencial
+        tamanho_fixo = 1 + 6 + 6 + 12 + 4
         tamanho_url = len(url_pdf)
         tamanho_espacos = 400 - tamanho_fixo - tamanho_url
         
-        print(f"URL Google Drive: {url_pdf}, Tamanho: {tamanho_url}, Espaços: {tamanho_espacos}")
-        
         trailer_boleto = (
-            "3" +                                     # 01 - Tipo
-            "000001" +                                # 02 - Sequencial de registros
-            "000001" +                                # 03 - Total de títulos
-            dados["valor_formatado"] +                # 04 - Valor Total
-            url_pdf +                                 # 05 - URL do PDF
-            " " * max(0, tamanho_espacos) +           # Espaços de preenchimento
-            str(sequencial).zfill(4)                  # 06 - Sequencial
+            "3" +
+            "000001" +
+            "000001" +
+            dados["valor_formatado"] +
+            url_pdf +
+            " " * max(0, tamanho_espacos) +
+            str(sequencial).zfill(4)
         )
         linhas.append(fixo(trailer_boleto, 400))
         
@@ -495,12 +510,10 @@ def upload_files():
         for file in files:
             if file and file.filename.lower().endswith('.pdf'):
                 try:
-                    # Salvar arquivo temporário
                     filename = secure_filename(file.filename)
                     temp_path = os.path.join(TEMP_UPLOAD_PATH, filename)
                     file.save(temp_path)
                     
-                    # Processar arquivo
                     resultado = processar_arquivo(filename, temp_path)
                     resultados["detalhes"].append(resultado)
                     
@@ -511,7 +524,6 @@ def upload_files():
                     else:
                         resultados["erros"] += 1
                     
-                    # Limpar arquivo temporário
                     try:
                         os.remove(temp_path)
                     except:
@@ -525,7 +537,7 @@ def upload_files():
                         "mensagem": str(e)
                     })
         
-        # Se modo lote, gerar remessa única
+        # Se modo lote
         if modo_lote and lista_dados_processados:
             try:
                 agora = datetime.now()
@@ -541,7 +553,6 @@ def upload_files():
                 
                 resultados["remessa"] = nome_remessa
                 
-                # Mover PDFs para pasta de processados
                 for dados in lista_dados_processados:
                     try:
                         caminho_origem = os.path.join(ENTRADA_PATH, dados["nome_arquivo"])
@@ -562,13 +573,11 @@ def download_remessas():
     try:
         os.makedirs(GERADAS_PATH, exist_ok=True)
         
-        # Listar todos os arquivos de remessa
         remessas = [f for f in os.listdir(GERADAS_PATH) if f.endswith('.txt')]
         
         if not remessas:
             return jsonify({"erro": "Nenhuma remessa disponível"}), 404
         
-        # Criar ZIP com todas as remessas
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             for remessa in remessas:
@@ -618,7 +627,6 @@ def processar():
                 resultados["erros"] += 1
             resultados["detalhes"].append(resultado)
         
-        # Se modo lote, gerar remessa única
         if modo_lote and lista_dados_processados:
             try:
                 agora = datetime.now()
@@ -634,7 +642,6 @@ def processar():
                 
                 resultados["remessa"] = nome_remessa
                 
-                # Mover PDFs para pasta de processados
                 for arquivo in arquivos:
                     try:
                         caminho_origem = os.path.join(ENTRADA_PATH, arquivo)
@@ -673,9 +680,14 @@ def static_files(filename):
 if __name__ == '__main__':
     print("🚀 Iniciando FEDCORP ERP Dashboard...")
     print(f"📁 BASE_PATH: {BASE_PATH}")
-    print(f"📁 ENTRADA_PATH: {ENTRADA_PATH}")
-    print(f"📁 GERADAS_PATH: {GERADAS_PATH}")
-    print(f"☁️ Google Drive Folder: {GOOGLE_DRIVE_FOLDER_URL}")
+    print(f"☁️ Google Drive Folder ID: {GOOGLE_DRIVE_FOLDER_ID}")
+    
+    # Inicializar Google Drive
+    print("🔐 Inicializando Google Drive API...")
+    if inicializar_google_drive():
+        print("✅ Google Drive API pronto")
+    else:
+        print("⚠️ Google Drive API não disponível")
     
     # Pré-carregar condominios
     print("📝 Carregando dados de condominios...")
