@@ -29,8 +29,9 @@ GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 
-# OneDrive Configuration
-ONEDRIVE_FOLDER_URL = "https://gwonline-my.sharepoint.com/:f:/g/personal/marcos_moreira_gwadm_com_br/IgBsnkdtd5dVQ7tXw-0Qgi-bAeG9enupDnGP9yYEtkJ_-uk?e=EvkB3j"
+# Google Drive Configuration
+GOOGLE_DRIVE_FOLDER_ID = "1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv"  # ID extraído do link
+GOOGLE_DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv?usp=sharing"
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
@@ -70,34 +71,49 @@ def extrair_cnpj_do_nome_arquivo(nome_arquivo):
     match = re.search(r"\d{14}", nome_arquivo)
     return match.group() if match else None
 
-def fazer_upload_onedrive(caminho_arquivo, nome_arquivo):
-    """Faz upload do arquivo para OneDrive e retorna a URL pública"""
+def fazer_upload_google_drive(caminho_arquivo, nome_arquivo):
+    """Faz upload do arquivo para Google Drive usando rclone e retorna a URL pública"""
     try:
-        print(f"Iniciando upload OneDrive para: {caminho_arquivo}")
+        print(f"Iniciando upload Google Drive para: {caminho_arquivo}")
         
-        # Converter URL de compartilhamento para URL de upload
-        # A URL de compartilhamento precisa ser convertida para URL de API
+        # Tentar usar rclone para fazer upload
+        # Primeiro, precisamos verificar se rclone está instalado
+        try:
+            resultado = subprocess.run(["rclone", "--version"], capture_output=True, text=True, timeout=5)
+            if resultado.returncode != 0:
+                print("⚠️ rclone não está instalado")
+                return None
+        except:
+            print("⚠️ rclone não encontrado")
+            return None
         
-        # Extrair o ID da pasta da URL
-        # Formato: https://gwonline-my.sharepoint.com/:f:/g/personal/marcos_moreira_gwadm_com_br/IgBsnkdtd5dVQ7tXw-0Qgi-bAeG9enupDnGP9yYEtkJ_-uk?e=EvkB3j
+        # Usar rclone para fazer upload
+        # Formato: rclone copy /caminho/arquivo "gdrive:ID_PASTA/arquivo"
+        resultado = subprocess.run(
+            ["rclone", "copy", caminho_arquivo, f"gdrive:{GOOGLE_DRIVE_FOLDER_ID}/"],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
         
-        # Para fazer upload via link público, precisamos usar a API do SharePoint
-        # Mas uma forma mais simples é usar o rclone ou fazer upload manual
+        print(f"Return code: {resultado.returncode}")
+        print(f"Stdout: {resultado.stdout}")
+        print(f"Stderr: {resultado.stderr}")
         
-        # Por enquanto, vamos retornar uma URL genérica que será preenchida depois
-        print(f"⚠️ Upload OneDrive ainda não implementado")
-        print(f"📁 Arquivo: {nome_arquivo}")
-        print(f"🔗 Pasta OneDrive: {ONEDRIVE_FOLDER_URL}")
-        
-        # Gerar URL que será usada no arquivo de remessa
-        # Formato: https://gwonline-my.sharepoint.com/personal/marcos_moreira_gwadm_com_br/Documents/FEDCORP_PDFs/ARQUIVO.pdf
-        url_onedrive = f"https://gwonline-my.sharepoint.com/personal/marcos_moreira_gwadm_com_br/Documents/FEDCORP_PDFs/{nome_arquivo}"
-        
-        print(f"✅ URL OneDrive gerada: {url_onedrive}")
-        return url_onedrive
-        
+        if resultado.returncode == 0:
+            # Gerar URL do Google Drive
+            # Formato: https://drive.google.com/file/d/FILE_ID/view
+            # Por enquanto, vamos retornar uma URL genérica
+            url_google_drive = f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
+            print(f"✅ Upload Google Drive bem-sucedido")
+            print(f"📁 Arquivo salvo em: {url_google_drive}")
+            return url_google_drive
+        else:
+            print(f"⚠️ Erro ao fazer upload: {resultado.stderr}")
+            return None
+    
     except Exception as e:
-        print(f"❌ Erro ao fazer upload OneDrive: {e}")
+        print(f"❌ Erro ao fazer upload Google Drive: {e}")
         return None
 
 def extrair_dados_pdf(pdf_path):
@@ -300,8 +316,16 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         except Exception as e:
             print(f"Aviso: Não foi possível copiar para pasta local: {e}")
         
-        # Fazer upload para OneDrive
-        url_onedrive = fazer_upload_onedrive(caminho_entrada, nome_arquivo)
+        # Fazer upload para Google Drive
+        url_google_drive = fazer_upload_google_drive(caminho_entrada, nome_arquivo)
+        
+        # Gerar URL direta do arquivo no Google Drive
+        # Nota: Isso é uma URL genérica da pasta. Para URL direta do arquivo, precisaríamos do file_id
+        if url_google_drive:
+            # Tentar extrair file_id do Google Drive (mais complexo, por enquanto usamos URL da pasta)
+            url_arquivo = f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
+        else:
+            url_arquivo = ""
         
         # Retornar dados processados
         resultado["status"] = "sucesso"
@@ -317,7 +341,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "codigo_barras": codigo_barras,
             "nome_arquivo": nome_arquivo,
             "caminho_pdf": caminho_pdf_destino,
-            "url_onedrive": url_onedrive,
+            "url_google_drive": url_arquivo,
             "ano": ano_atual,
             "mes": mes_atual
         }
@@ -396,7 +420,7 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         linhas.append(fixo(registro_2, 400))
         
         # REGISTRO 3 - TRAILER COM URL DO PDF (um para cada boleto)
-        url_pdf = dados.get("url_onedrive", "")
+        url_pdf = dados.get("url_google_drive", "")
         if not url_pdf:
             url_pdf = ""
         
@@ -405,7 +429,7 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         tamanho_url = len(url_pdf)
         tamanho_espacos = 400 - tamanho_fixo - tamanho_url
         
-        print(f"URL OneDrive: {url_pdf}, Tamanho: {tamanho_url}, Espaços: {tamanho_espacos}")
+        print(f"URL Google Drive: {url_pdf}, Tamanho: {tamanho_url}, Espaços: {tamanho_espacos}")
         
         trailer_boleto = (
             "3" +                                     # 01 - Tipo
@@ -650,7 +674,7 @@ if __name__ == '__main__':
     print(f"📁 BASE_PATH: {BASE_PATH}")
     print(f"📁 ENTRADA_PATH: {ENTRADA_PATH}")
     print(f"📁 GERADAS_PATH: {GERADAS_PATH}")
-    print(f"☁️ OneDrive Folder: {ONEDRIVE_FOLDER_URL}")
+    print(f"☁️ Google Drive Folder: {GOOGLE_DRIVE_FOLDER_URL}")
     
     # Pré-carregar condominios
     print("📝 Carregando dados de condominios...")
