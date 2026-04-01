@@ -33,6 +33,9 @@ PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 GOOGLE_DRIVE_FOLDER_ID = "1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv"  # ID extraído do link
 GOOGLE_DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv?usp=sharing"
 
+# Remover referências ao SharePoint
+# SHAREPOINT_FOLDER_URL = "https://gwonline-my.sharepoint.com/:f:/g/personal/marcos_moreira_gwadm_com_br/IgBsnkdtd5dVQ7tXw-0Qgi-bAeG9enupDnGP9yYEtkJ_-uk?e=EvkB3j"
+
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
     os.path.join(BASE_PATH, "BASE", "DADOS_CONDOMINIOS.xlsx"),
@@ -319,13 +322,11 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         # Fazer upload para Google Drive
         url_google_drive = fazer_upload_google_drive(caminho_entrada, nome_arquivo)
         
-        # Gerar URL direta do arquivo no Google Drive
-        # Nota: Isso é uma URL genérica da pasta. Para URL direta do arquivo, precisaríamos do file_id
+        # Usar URL do Google Drive
         if url_google_drive:
-            # Tentar extrair file_id do Google Drive (mais complexo, por enquanto usamos URL da pasta)
-            url_arquivo = f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
+            url_arquivo = GOOGLE_DRIVE_FOLDER_URL
         else:
-            url_arquivo = ""
+            url_arquivo = GOOGLE_DRIVE_FOLDER_URL  # Usar URL da pasta como fallback
         
         # Retornar dados processados
         resultado["status"] = "sucesso"
