@@ -14,8 +14,6 @@ from werkzeug.utils import secure_filename
 from io import BytesIO
 import zipfile
 
-# Google Drive não requer imports especiais - usaremos rclone ou URL direta
-
 # Configurar o caminho correto para os arquivos estáticos
 static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
 if not os.path.exists(static_folder):
@@ -30,16 +28,6 @@ ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
 GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
-
-# Google Drive Configuration
-GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv")
-GOOGLE_DRIVE_CREDENTIALS_JSON = os.getenv("GOOGLE_DRIVE_CREDENTIALS", "{}")
-
-try:
-    GOOGLE_DRIVE_CREDENTIALS = json.loads(GOOGLE_DRIVE_CREDENTIALS_JSON)
-except:
-    print("⚠️ Credenciais do Google Drive não configuradas")
-    GOOGLE_DRIVE_CREDENTIALS = {}
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
@@ -66,33 +54,6 @@ DESC_PRODUTO_ERP = ""
 # Cache de condominios em memória
 CONDOMINIOS_CACHE = None
 CACHE_TIMESTAMP = None
-
-def fazer_upload_google_drive(caminho_arquivo, nome_arquivo):
-    """Tenta fazer upload para Google Drive usando rclone"""
-    try:
-        print(f"📤 Tentando upload para Google Drive: {nome_arquivo}")
-        
-        # Tentar usar rclone
-        resultado = subprocess.run(
-            ["rclone", "copy", caminho_arquivo, f"gdrive:{GOOGLE_DRIVE_FOLDER_ID}/"],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        if resultado.returncode == 0:
-            print(f"✅ Upload rclone bem-sucedido")
-            # Retornar URL da pasta como fallback
-            return f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
-        else:
-            print(f"⚠️ rclone não disponível ou erro: {resultado.stderr}")
-            # Usar URL da pasta como fallback
-            return f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
-    
-    except Exception as e:
-        print(f"⚠️ Erro ao fazer upload: {e}")
-        # Usar URL da pasta como fallback
-        return f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
 
 def remover_acentos(texto):
     if not texto: return ""
@@ -292,8 +253,8 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         except Exception as e:
             print(f"Aviso: Não foi possível copiar para pasta local: {e}")
         
-        # Fazer upload para Google Drive
-        url_google_drive = fazer_upload_google_drive(caminho_entrada, nome_arquivo)
+        # Gerar URL local
+        url_local = f"http://localhost:5000/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
         
         # Retornar dados
         resultado["status"] = "sucesso"
@@ -309,7 +270,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "codigo_barras": codigo_barras,
             "nome_arquivo": nome_arquivo,
             "caminho_pdf": caminho_pdf_destino,
-            "url_google_drive": url_google_drive if url_google_drive else "",
+            "url_local": url_local,
             "ano": ano_atual,
             "mes": mes_atual
         }
@@ -365,7 +326,7 @@ def gerar_remessa_lote(lista_dados, competencia=None):
             "000000000,00" +
             "000000000,00" +
             "N" +
-            "          " +
+            dados["data_emissao"] +
             "          " +
             "     " +
             "     " +
@@ -387,22 +348,19 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         )
         linhas.append(fixo(registro_2, 400))
         
-        # REGISTRO 3 com URL
-        url_pdf = dados.get("url_google_drive", "")
-        if not url_pdf:
-            url_pdf = ""
+        # REGISTRO 3 com URL local
+        url_pdf = dados.get("url_local", "")
         
-        tamanho_fixo = 1 + 6 + 6 + 12 + 4
+        tamanho_fixo = 1 + 4 + 10 + 4
         tamanho_url = len(url_pdf)
         tamanho_espacos = 400 - tamanho_fixo - tamanho_url
         
         trailer_boleto = (
             "3" +
-            "000001" +
-            "000001" +
-            dados["valor_formatado"] +
-            url_pdf +
-            " " * max(0, tamanho_espacos) +
+            "0001" +
+            "0000000000" +
+            fixo(url_pdf, 300) +
+            " " * 81 +
             str(sequencial).zfill(4)
         )
         linhas.append(fixo(trailer_boleto, 400))
@@ -501,14 +459,6 @@ def upload_files():
                     f.write(conteudo_remessa)
                 
                 resultados["remessa"] = nome_remessa
-                
-                for dados in lista_dados_processados:
-                    try:
-                        caminho_origem = os.path.join(ENTRADA_PATH, dados["nome_arquivo"])
-                        if os.path.exists(caminho_origem):
-                            shutil.move(caminho_origem, os.path.join(GERADAS_PATH, dados["nome_arquivo"]))
-                    except:
-                        pass
             
             except Exception as e:
                 resultados["erro_lote"] = str(e)
@@ -543,69 +493,6 @@ def download_remessas():
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
-@app.route('/processar', methods=['POST'])
-def processar():
-    try:
-        os.makedirs(ENTRADA_PATH, exist_ok=True)
-        os.makedirs(GERADAS_PATH, exist_ok=True)
-        os.makedirs(NAO_PROCESSADOS_PATH, exist_ok=True)
-        
-        modo_lote = request.json.get('modo_lote', False) if request.json else False
-        
-        arquivos = [f for f in os.listdir(ENTRADA_PATH) if f.lower().endswith('.pdf')]
-        
-        resultados = {
-            "total": len(arquivos),
-            "sucesso": 0,
-            "avisos": 0,
-            "erros": 0,
-            "modo_lote": modo_lote,
-            "remessa": None,
-            "detalhes": []
-        }
-        
-        lista_dados_processados = []
-        
-        for arquivo in arquivos:
-            resultado = processar_arquivo(arquivo)
-            if resultado["status"] == "sucesso":
-                resultados["sucesso"] += 1
-                if modo_lote:
-                    lista_dados_processados.append(resultado.get("dados"))
-            else:
-                resultados["erros"] += 1
-            resultados["detalhes"].append(resultado)
-        
-        if modo_lote and lista_dados_processados:
-            try:
-                agora = datetime.now()
-                competencia = agora.strftime("%m%Y")
-                conteudo_remessa = gerar_remessa_lote(lista_dados_processados, competencia)
-                
-                nome_remessa = f"REMESSA_FEDCORP_LOTE_{agora.strftime('%Y%m%d%H%M%S')}.txt"
-                caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
-                
-                os.makedirs(GERADAS_PATH, exist_ok=True)
-                with open(caminho_remessa, 'w', encoding='utf-8') as f:
-                    f.write(conteudo_remessa)
-                
-                resultados["remessa"] = nome_remessa
-                
-                for arquivo in arquivos:
-                    try:
-                        caminho_origem = os.path.join(ENTRADA_PATH, arquivo)
-                        if os.path.exists(caminho_origem):
-                            shutil.move(caminho_origem, os.path.join(GERADAS_PATH, arquivo))
-                    except:
-                        pass
-            
-            except Exception as e:
-                resultados["erro_lote"] = str(e)
-        
-        return jsonify(resultados)
-    except Exception as e:
-        return jsonify({"erro": str(e)}), 500
-
 @app.route('/docs/<ano>/<mes>/<arquivo>')
 def servir_documento(ano, mes, arquivo):
     try:
@@ -629,7 +516,7 @@ def static_files(filename):
 if __name__ == '__main__':
     print("🚀 Iniciando FEDCORP ERP Dashboard...")
     print(f"📁 BASE_PATH: {BASE_PATH}")
-    print(f"☁️ Google Drive Folder: {GOOGLE_DRIVE_FOLDER_ID}")
+    print(f"📂 PASTA_DOCS_PATH: {PASTA_DOCS_PATH}")
     
     # Pré-carregar condominios
     print("📝 Carregando dados de condominios...")
