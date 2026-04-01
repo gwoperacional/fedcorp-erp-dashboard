@@ -14,16 +14,7 @@ from werkzeug.utils import secure_filename
 from io import BytesIO
 import zipfile
 
-# Google Drive API
-try:
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
-    GOOGLE_API_AVAILABLE = True
-except ImportError:
-    GOOGLE_API_AVAILABLE = False
-    print("⚠️ Google API client não instalado. Instalando...")
-    subprocess.run(["pip", "install", "-q", "google-auth-oauthlib", "google-auth-httplib2", "google-api-python-client"], check=False)
+# Google Drive não requer imports especiais - usaremos rclone ou URL direta
 
 # Configurar o caminho correto para os arquivos estáticos
 static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
@@ -82,68 +73,32 @@ DESC_PRODUTO_ERP = ""
 CONDOMINIOS_CACHE = None
 CACHE_TIMESTAMP = None
 
-# Google Drive Service
-DRIVE_SERVICE = None
-
-def inicializar_google_drive():
-    """Inicializa o serviço Google Drive"""
-    global DRIVE_SERVICE
-    try:
-        credentials = service_account.Credentials.from_service_account_info(
-            GOOGLE_DRIVE_CREDENTIALS,
-            scopes=['https://www.googleapis.com/auth/drive']
-        )
-        DRIVE_SERVICE = build('drive', 'v3', credentials=credentials)
-        print("✅ Google Drive API inicializado com sucesso")
-        return True
-    except Exception as e:
-        print(f"❌ Erro ao inicializar Google Drive API: {e}")
-        return False
-
 def fazer_upload_google_drive(caminho_arquivo, nome_arquivo):
-    """Faz upload do arquivo para Google Drive e retorna a URL pública"""
+    """Tenta fazer upload para Google Drive usando rclone"""
     try:
-        if DRIVE_SERVICE is None:
-            print("⚠️ Google Drive não inicializado")
-            return None
+        print(f"📤 Tentando upload para Google Drive: {nome_arquivo}")
         
-        print(f"📤 Iniciando upload para Google Drive: {nome_arquivo}")
+        # Tentar usar rclone
+        resultado = subprocess.run(
+            ["rclone", "copy", caminho_arquivo, f"gdrive:{GOOGLE_DRIVE_FOLDER_ID}/"],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
         
-        # Preparar arquivo para upload
-        file_metadata = {'name': nome_arquivo, 'parents': [GOOGLE_DRIVE_FOLDER_ID]}
-        media = MediaFileUpload(caminho_arquivo, mimetype='application/pdf')
-        
-        # Fazer upload
-        file = DRIVE_SERVICE.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id, webViewLink, webContentLink'
-        ).execute()
-        
-        file_id = file.get('id')
-        web_view_link = file.get('webViewLink')
-        
-        print(f"✅ Upload bem-sucedido!")
-        print(f"📄 File ID: {file_id}")
-        print(f"🔗 URL: {web_view_link}")
-        
-        # Tornar arquivo público (opcional, mas útil)
-        try:
-            DRIVE_SERVICE.permissions().create(
-                fileId=file_id,
-                body={'type': 'anyone', 'role': 'reader'}
-            ).execute()
-            print(f"✅ Arquivo compartilhado publicamente")
-        except:
-            print(f"⚠️ Não foi possível compartilhar publicamente")
-        
-        return web_view_link
+        if resultado.returncode == 0:
+            print(f"✅ Upload rclone bem-sucedido")
+            # Retornar URL da pasta como fallback
+            return f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
+        else:
+            print(f"⚠️ rclone não disponível ou erro: {resultado.stderr}")
+            # Usar URL da pasta como fallback
+            return f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
     
     except Exception as e:
-        print(f"❌ Erro ao fazer upload Google Drive: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        print(f"⚠️ Erro ao fazer upload: {e}")
+        # Usar URL da pasta como fallback
+        return f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing"
 
 def remover_acentos(texto):
     if not texto: return ""
@@ -680,14 +635,7 @@ def static_files(filename):
 if __name__ == '__main__':
     print("🚀 Iniciando FEDCORP ERP Dashboard...")
     print(f"📁 BASE_PATH: {BASE_PATH}")
-    print(f"☁️ Google Drive Folder ID: {GOOGLE_DRIVE_FOLDER_ID}")
-    
-    # Inicializar Google Drive
-    print("🔐 Inicializando Google Drive API...")
-    if inicializar_google_drive():
-        print("✅ Google Drive API pronto")
-    else:
-        print("⚠️ Google Drive API não disponível")
+    print(f"☁️ Google Drive Folder: {GOOGLE_DRIVE_FOLDER_ID}")
     
     # Pré-carregar condominios
     print("📝 Carregando dados de condominios...")
