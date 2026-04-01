@@ -27,7 +27,14 @@ BASE_PATH = os.getenv("BASE_PATH", r"G:\Wallpaper\FEDCORP_PROCESSADOR")
 ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
 GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
-PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
+
+# Armazenamento local no Render
+PASTA_DOCS_PATH = os.path.join("/tmp", "fedcorp_docs")
+os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
+
+# Tentar usar pasta local se disponível
+if os.path.exists(r"G:\Wallpaper\FEDCORP_PROCESSADOR"):
+    PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
@@ -253,8 +260,13 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         except Exception as e:
             print(f"Aviso: Não foi possível copiar para pasta local: {e}")
         
-        # Gerar URL local
-        url_local = f"http://localhost:5000/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
+        # Gerar URL local/remota
+        # Se estiver no Render, usar URL pública
+        if os.getenv('RENDER'):
+            render_url = os.getenv('RENDER_EXTERNAL_URL', 'https://fedcorp-erp-dashboard.onrender.com')
+            url_local = f"{render_url}/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
+        else:
+            url_local = f"http://localhost:5000/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
         
         # Retornar dados
         resultado["status"] = "sucesso"
