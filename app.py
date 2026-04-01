@@ -32,20 +32,14 @@ NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 
 # Google Drive Configuration
-GOOGLE_DRIVE_FOLDER_ID = "1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv"
-GOOGLE_DRIVE_CREDENTIALS = {
-    "type": "service_account",
-    "project_id": "fedcorp-dashboard",
-    "private_key_id": "639e51866beca0e27781366862ec4b687a823fd4",
-    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDWBHU5cWKMqZg+\nQuHCfEIgMrqsO8877sBjRMbv34rPLKufIgGia1d/QXZ7oOn4B/HPg+adZQLd9coL\nX1mu6G2qHV7i7mDpYmOzWylUKqsgp8cUv7TpuZz36JEQVOjyLO+H1aarghCV08sn\ndlfqnRqawyt4H2FpUR8ubzgaHNP/t0+fYlqc6GkGCktndQo/toDzytPYzNXIb30I\nWCX5pcMpd2cLS1OBebRrqrJsYqtFvxOl8GdYrBwv6KVwm1hp+1qyMs/nkZ31xU7u\n3Q4nJ0U7ApnIy7JuKhgcdrhNuQJV+fQ0OiR/p3heQmgYHZz/qwVP30BZcWuF9ibP\nfBioSJ75AgMBAAECggEAQ0k2g79asQe3Bkgny2oerhnU58aMEncvRGaAtzTMYvNT\n592crvBZm3g85ISEWsdAprH9BNoXqyoWAjpRq3SG2feO+ADjNi0JVH/iQASENemZ\n5TOakOsa5zRWu1A+xrkK++VXl892IGzsj7Uc0fXfwe1/kq4nBaIMECDGfis3Gct4\ni8+8rryNYZLfbmQ8rmuyvTnUp/F43TtF5gpcd8KgbDkjDFcm+uIBPiW+cm1yv01q\nJVGt8g0oZPFJPBjonweGNzyds9FM6bZiUh2ZPs4YQznJdjoWR6iWa2NsLynl5KcA\nEjk6eWMusK+0JwBlL3fyMqkA8RSkSTL67M8xjK4lawKBgQDse9ATBfxqeyCIiBkR\nVFsELr1T6TferopbTIX81nd4WTsLqrryBKBc+XegSE3wGkZtNyy8wJadFT+rsKwW\np0nVck/NDv1Qd+5ILc1YDa5RZrXD80ySFe9+fg4Lx5IWIVBrTUZa8P5l37tMPsdc\nkhX8CVGUCyVMhP62DhBQ3jfXjwKBgQDnrgBXhjVA9MEIo4og2xn4nig1JkqdBwVE\nG7jiDJ9+2u0hAd/mT6FckCYa0TrNwonVdNX6DUn3OQEsuPs4C5xgkbwsSE5rHIDB\ntIUWR01Xe2PX0/L6baZ8q4mMVMazXo1711yw3k/QWq2jmja8E/zYyawsg04pDqFT\nLO2xQ+wc9wKBgQDprvuRINQqgJtIb3yd9EawXmN2XLp50O4lg/vPOjr6cOp4//AW\nId45ocbFW02w2rYHTINnzcPHW+z8Auw6wnqicoBK+On2r1yGdMQ6o+JCzAUHqg9b\nOFPeIkBNAZvpRGhMcCL60LQDBU/26v5kCnOxB6BWc6Ea+T0dt84Fq2FxHwKBgQC7\ncB06sowXN22NLbKtDlaevGZPSeGH1Yw/JCaaTBgmK705vSiGTtp/5ufNPoXSvpeB\nKPuNSH8VEvuOUUJ+f3ZO8tlJAl7fbboF/aTG93ztUBjhHsswLNJLfwTTkisIJ3FU\nRlLpjZMJQLPG7xdlZs5kHhW8FaeAtCN1BZ5wkkFO1QKBgHcKhaNg3dZbZl7dNf2A\npmgKicG5D3QdBqgJJeWpYGQGfJjmdE0Nl0rCzvxDmjunsfEOR+Gpv5JdB4r4FkA+\n4MXnwaZHrV/EbVxa+dkpt/2OpoVFaDsYn/L+wAqaiBKWHUFHagICYpqf6Jy7Tm4c\np0XxpIRacyqnvNufYIVRutg5\n-----END PRIVATE KEY-----\n",
-    "client_email": "fedcorp-uploader@fedcorp-dashboard.iam.gserviceaccount.com",
-    "client_id": "108990766178617167931",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/fedcorp-uploader%40fedcorp-dashboard.iam.gserviceaccount.com",
-    "universe_domain": "googleapis.com"
-}
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "1d-JrBnAEc9Al8wyKQkjENiIk6pte9Jqv")
+GOOGLE_DRIVE_CREDENTIALS_JSON = os.getenv("GOOGLE_DRIVE_CREDENTIALS", "{}")
+
+try:
+    GOOGLE_DRIVE_CREDENTIALS = json.loads(GOOGLE_DRIVE_CREDENTIALS_JSON)
+except:
+    print("⚠️ Credenciais do Google Drive não configuradas")
+    GOOGLE_DRIVE_CREDENTIALS = {}
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
