@@ -49,14 +49,33 @@ POSSIBLE_PATHS = [
 TEMP_UPLOAD_PATH = os.path.join(tempfile.gettempdir(), "fedcorp_uploads")
 os.makedirs(TEMP_UPLOAD_PATH, exist_ok=True)
 
-# Dados Fixos para Seguro de Vida (FEDCORP)
-CNPJ_ADMIN = "26231209000150"
-NOME_ADMIN = "GW ADMINISTRADORA DE CONDOMINIOS LTDA"
-FORNECEDOR_CNPJ = "35315360000167"
-FORNECEDOR_NOME = "FEDCORP ADMINISTRADORA DE BENEFICIOS LTDA"
-COD_FORNECEDOR_ERP = "24196"
-COD_PRODUTO_ERP = "SEGUROVIDA"
-DESC_PRODUTO_ERP = ""
+# ============================================================================
+# MÓDULO FEDCORP - Dados Fixos para Seguro de Vida
+# ============================================================================
+FEDCORP_CONFIG = {
+    "cnpj_admin": "26231209000150",
+    "nome_admin": "GW ADMINISTRADORA DE CONDOMINIOS LTDA",
+    "fornecedor_cnpj": "35315360000167",
+    "fornecedor_nome": "FEDCORP ADMINISTRADORA DE BENEFICIOS LTDA",
+    "cod_fornecedor_erp": "24196",
+    "cod_produto_erp": "SEGUROVIDA",
+    "desc_produto_erp": "",
+    "tipo": "BOLETO"
+}
+
+# ============================================================================
+# MÓDULO CONDOMED - Dados Fixos para Medicina e Seg. do Trabalho
+# ============================================================================
+CONDOMED_CONFIG = {
+    "cnpj_admin": "26231209000150",
+    "nome_admin": "GW ADMINISTRADORA DE CONDOMINIOS LTDA",
+    "fornecedor_cnpj": "27892999000187",
+    "fornecedor_nome": "CONDOMED RIO SEGURANCA E MEDICINA DO TRABALHO LTDA",
+    "cod_fornecedor_erp": "24367",
+    "cod_produto_erp": "MEDTRABALHO",
+    "desc_produto_erp": "Medicina e Seg. do Trabalho",
+    "tipo": "NFS-E"
+}
 
 # Cache de condominios em memória
 CONDOMINIOS_CACHE = None
@@ -74,8 +93,47 @@ def extrair_cnpj_do_nome_arquivo(nome_arquivo):
     match = re.search(r"\d{14}", nome_arquivo)
     return match.group() if match else None
 
-def extrair_dados_pdf(pdf_path):
-    dados = {"linha_digitavel": None, "numero_nota": None, "vencimento": None, "valor": None}
+def detectar_tipo_documento(pdf_path):
+    """Detecta se é boleto FEDCORP ou NFS-e CONDOMED"""
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            texto_completo = ""
+            for pagina in pdf.pages:
+                t = pagina.extract_text()
+                if t: texto_completo += t + "\n"
+            
+            # Detectar NFS-e
+            if "NFS-e" in texto_completo or "Nota Fiscal de Serviços" in texto_completo:
+                if "CONDOMED" in texto_completo or "27.892.999" in texto_completo:
+                    return "CONDOMED"
+            
+            # Detectar boleto FEDCORP
+            if "FEDCORP" in texto_completo or "35.315.360" in texto_completo:
+                return "FEDCORP"
+            
+            # Se tiver linha digitável, é boleto
+            regex_linha = r"\d{5}[\.\s]?\d{5}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d[\.\s]?\d{14}"
+            if re.search(regex_linha, texto_completo):
+                return "FEDCORP"
+            
+            # Se tiver NFS-e, é CONDOMED
+            if "DANFSe" in texto_completo or "Chave de Acesso da NFS-e" in texto_completo:
+                return "CONDOMED"
+    
+    except Exception as e:
+        print(f"Erro ao detectar tipo: {e}")
+    
+    return None
+
+def extrair_dados_boleto(pdf_path):
+    """Extrai dados de boleto FEDCORP"""
+    dados = {
+        "linha_digitavel": None,
+        "numero_nota": None,
+        "vencimento": None,
+        "valor": None,
+        "numero_nfse": None
+    }
     try:
         with pdfplumber.open(pdf_path) as pdf:
             texto_completo = ""
@@ -108,7 +166,86 @@ def extrair_dados_pdf(pdf_path):
             if match_valor:
                 dados["valor"] = match_valor.group(1).replace(".", "").replace(",", ".")
     except Exception as e:
-        print(f"Erro ao extrair dados do PDF: {e}")
+        print(f"Erro ao extrair dados do boleto: {e}")
+    
+    return dados
+
+def extrair_dados_nfse(pdf_path):
+    """Extrai dados de NFS-e CONDOMED"""
+    dados = {
+        "linha_digitavel": None,
+        "numero_nota": None,
+        "vencimento": None,
+        "valor": None,
+        "numero_nfse": None,
+        "cnpj_pagador": None
+    }
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            texto_completo = ""
+            for pagina in pdf.pages:
+                t = pagina.extract_text()
+                if t: texto_completo += t + "\n"
+            
+            # Extrair número da NFS-e
+            # Padrão: "Número da NFS-e" seguido de números na próxima linha
+            match_nfse = re.search(r"Número da NFS-e[^\n]*\n\s*(\d+)\s+\d{2}/\d{2}/\d{4}", texto_completo)
+            if match_nfse:
+                dados["numero_nfse"] = match_nfse.group(1)
+            else:
+                # Tenta padrão alternativo
+                match_nfse = re.search(r"Número da NFS-e\s+(\d+)", texto_completo)
+                if match_nfse:
+                    dados["numero_nfse"] = match_nfse.group(1)
+            
+            # Extrair CNPJ do pagador (tomador do serviço)
+            # Tenta primeiro o padrão formatado
+            match_cnpj = re.search(r"TOMADOR DO SERVIÇO\s+CNPJ / CPF / NIF\s+(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", texto_completo, re.DOTALL)
+            if not match_cnpj:
+                # Tenta padrão sem formatação
+                match_cnpj = re.search(r"CNPJ/CPF:\s*(\d{2}\d{3}\d{3}\d{4}\d{2})", texto_completo)
+            if not match_cnpj:
+                # Tenta outro padrão
+                match_cnpj = re.search(r"Pagador\s+.*?CNPJ/CPF:\s*(\d+)", texto_completo, re.DOTALL)
+            
+            if match_cnpj:
+                cnpj_raw = match_cnpj.group(1)
+                # Se estiver formatado, remover formatação
+                if "." in cnpj_raw or "-" in cnpj_raw or "/" in cnpj_raw:
+                    dados["cnpj_pagador"] = cnpj_raw
+                else:
+                    # Se não estiver formatado, formatar
+                    cnpj_clean = cnpj_raw.replace(".", "").replace("-", "").replace("/", "")
+                    if len(cnpj_clean) == 14:
+                        dados["cnpj_pagador"] = f"{cnpj_clean[0:2]}.{cnpj_clean[2:5]}.{cnpj_clean[5:8]}/{cnpj_clean[8:12]}-{cnpj_clean[12:14]}"
+            
+            # Extrair valor total da NFS-e
+            match_valor = re.search(r"Valor Líquido da NFS-e\s+R\$\s*([\d\.,]+)", texto_completo)
+            if match_valor:
+                dados["valor"] = match_valor.group(1).replace(".", "").replace(",", ".")
+            else:
+                # Tenta outro padrão
+                match_valor = re.search(r"VALOR TOTAL:?\s*R\$\s*([\d\.,]+)", texto_completo, re.IGNORECASE)
+                if match_valor:
+                    dados["valor"] = match_valor.group(1).replace(".", "").replace(",", ".")
+            
+            # Extrair vencimento
+            match_venc = re.search(r"Vencimento\s+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+            if match_venc:
+                dados["vencimento"] = match_venc.group(1)
+            else:
+                match_venc = re.search(r"ATE O VENCIMENTO\s+(\d{2}/\d{2}/\d{4})", texto_completo)
+                if match_venc:
+                    dados["vencimento"] = match_venc.group(1)
+            
+            # Extrair linha digitável (se houver boleto integrado)
+            regex_linha = r"\d{5}[\.\s]?\d{5}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d[\.\s]?\d{14}"
+            match_linha = re.search(regex_linha, texto_completo)
+            if match_linha:
+                dados["linha_digitavel"] = re.sub(r"\D", "", match_linha.group())
+    
+    except Exception as e:
+        print(f"Erro ao extrair dados da NFS-e: {e}")
     
     return dados
 
@@ -183,6 +320,10 @@ def carregar_condominios():
             "65169906000180": {
                 "nome": "CONDOMINIO EDIFICIO GROPIUS",
                 "codigo": "0762"
+            },
+            "25530528000101": {
+                "nome": "CONDOMINIO DO EDIFICIO PARQUE SAO BENTO",
+                "codigo": "0009"
             }
         }
     
@@ -192,12 +333,13 @@ def carregar_condominios():
     return condominios
 
 def processar_arquivo(nome_arquivo, caminho_entrada=None):
-    """Processa um arquivo PDF"""
+    """Processa um arquivo PDF (boleto ou NFS-e)"""
     resultado = {
         "arquivo": nome_arquivo,
         "status": "erro",
         "mensagem": "",
-        "dados": None
+        "dados": None,
+        "tipo": None
     }
     
     try:
@@ -208,6 +350,33 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             resultado["mensagem"] = f"Arquivo não encontrado"
             return resultado
         
+        # Detectar tipo de documento
+        tipo_doc = detectar_tipo_documento(caminho_entrada)
+        resultado["tipo"] = tipo_doc
+        
+        if tipo_doc == "CONDOMED":
+            return processar_nfse(nome_arquivo, caminho_entrada)
+        else:
+            return processar_boleto(nome_arquivo, caminho_entrada)
+    
+    except Exception as e:
+        resultado["mensagem"] = f"Erro ao processar: {str(e)}"
+        import traceback
+        print(traceback.format_exc())
+    
+    return resultado
+
+def processar_boleto(nome_arquivo, caminho_entrada):
+    """Processa boleto FEDCORP"""
+    resultado = {
+        "arquivo": nome_arquivo,
+        "status": "erro",
+        "mensagem": "",
+        "dados": None,
+        "tipo": "FEDCORP"
+    }
+    
+    try:
         # Extrair CNPJ
         cnpj_condominio = extrair_cnpj_do_nome_arquivo(nome_arquivo)
         if not cnpj_condominio:
@@ -229,7 +398,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         cond_info = condominios[cnpj_condominio]
         
         # Extrair dados do PDF
-        dados_pdf = extrair_dados_pdf(caminho_entrada)
+        dados_pdf = extrair_dados_boleto(caminho_entrada)
         if not dados_pdf["linha_digitavel"]:
             resultado["mensagem"] = "Não foi possível extrair a linha digitável"
             return resultado
@@ -261,7 +430,6 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             print(f"Aviso: Não foi possível copiar para pasta local: {e}")
         
         # Gerar URL local/remota
-        # Se estiver no Render, usar URL pública
         if os.getenv('RENDER'):
             render_url = os.getenv('RENDER_EXTERNAL_URL', 'https://fedcorp-erp-dashboard.onrender.com')
             url_local = f"{render_url}/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
@@ -270,7 +438,7 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
         
         # Retornar dados
         resultado["status"] = "sucesso"
-        resultado["mensagem"] = "Arquivo processado com sucesso"
+        resultado["mensagem"] = "Boleto processado com sucesso"
         resultado["dados"] = {
             "cnpj": cnpj_condominio,
             "cod_cond": cod_cond_erp,
@@ -284,18 +452,111 @@ def processar_arquivo(nome_arquivo, caminho_entrada=None):
             "caminho_pdf": caminho_pdf_destino,
             "url_local": url_local,
             "ano": ano_atual,
-            "mes": mes_atual
+            "mes": mes_atual,
+            "numero_nfse": None,
+            "tipo_fornecedor": "FEDCORP"
         }
     
     except Exception as e:
-        resultado["mensagem"] = f"Erro ao processar: {str(e)}"
+        resultado["mensagem"] = f"Erro ao processar boleto: {str(e)}"
+        import traceback
+        print(traceback.format_exc())
+    
+    return resultado
+
+def processar_nfse(nome_arquivo, caminho_entrada):
+    """Processa NFS-e CONDOMED"""
+    resultado = {
+        "arquivo": nome_arquivo,
+        "status": "erro",
+        "mensagem": "",
+        "dados": None,
+        "tipo": "CONDOMED"
+    }
+    
+    try:
+        # Extrair dados da NFS-e
+        dados_pdf = extrair_dados_nfse(caminho_entrada)
+        
+        if not dados_pdf["cnpj_pagador"]:
+            resultado["mensagem"] = "Não foi possível extrair CNPJ do pagador"
+            return resultado
+        
+        # Limpar CNPJ
+        cnpj_condominio = dados_pdf["cnpj_pagador"].replace(".", "").replace("-", "").replace("/", "")
+        if len(cnpj_condominio) >= 14:
+            cnpj_condominio = cnpj_condominio[:14]
+        
+        # Carregar condominios
+        condominios = carregar_condominios()
+        
+        if cnpj_condominio not in condominios:
+            resultado["mensagem"] = f"Condomínio com CNPJ {cnpj_condominio} não cadastrado"
+            return resultado
+        
+        cond_info = condominios[cnpj_condominio]
+        
+        # Preparar dados
+        agora = datetime.now()
+        vencimento = dados_pdf["vencimento"] if dados_pdf["vencimento"] else agora.strftime("%d/%m/%Y")
+        data_emissao = agora.strftime("%d/%m/%Y")
+        valor_float = float(dados_pdf["valor"]) if dados_pdf["valor"] else 0.0
+        valor_formatado = formatar_valor_ahreas(valor_float)
+        cod_cond_erp = cond_info["codigo"].zfill(4)
+        nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
+        
+        # Gerar código de barras (usar NFS-e como referência)
+        numero_nfse = dados_pdf["numero_nfse"] if dados_pdf["numero_nfse"] else "0000000000"
+        codigo_barras = numero_nfse.zfill(14)
+        
+        # Copiar para pasta local
+        ano_atual = agora.strftime("%Y")
+        mes_atual = agora.strftime("%m")
+        pasta_destino_docs = os.path.join(PASTA_DOCS_PATH, ano_atual, mes_atual)
+        os.makedirs(pasta_destino_docs, exist_ok=True)
+        caminho_pdf_destino = os.path.join(pasta_destino_docs, nome_arquivo)
+        try:
+            shutil.copy(caminho_entrada, caminho_pdf_destino)
+        except Exception as e:
+            print(f"Aviso: Não foi possível copiar para pasta local: {e}")
+        
+        # Gerar URL local/remota
+        if os.getenv('RENDER'):
+            render_url = os.getenv('RENDER_EXTERNAL_URL', 'https://fedcorp-erp-dashboard.onrender.com')
+            url_local = f"{render_url}/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
+        else:
+            url_local = f"http://localhost:5000/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
+        
+        # Retornar dados
+        resultado["status"] = "sucesso"
+        resultado["mensagem"] = "NFS-e processada com sucesso"
+        resultado["dados"] = {
+            "cnpj": cnpj_condominio,
+            "cod_cond": cod_cond_erp,
+            "nome_cond": nome_cond_erp,
+            "vencimento": vencimento,
+            "data_emissao": data_emissao,
+            "valor_formatado": valor_formatado,
+            "valor_float": valor_float,
+            "codigo_barras": codigo_barras,
+            "nome_arquivo": nome_arquivo,
+            "caminho_pdf": caminho_pdf_destino,
+            "url_local": url_local,
+            "ano": ano_atual,
+            "mes": mes_atual,
+            "numero_nfse": dados_pdf["numero_nfse"],
+            "tipo_fornecedor": "CONDOMED"
+        }
+    
+    except Exception as e:
+        resultado["mensagem"] = f"Erro ao processar NFS-e: {str(e)}"
         import traceback
         print(traceback.format_exc())
     
     return resultado
 
 def gerar_remessa_lote(lista_dados, competencia=None):
-    """Gera remessa única com múltiplos registros"""
+    """Gera remessa única com múltiplos registros (boletos e NFS-e)"""
     if not lista_dados:
         return None
     
@@ -305,20 +566,28 @@ def gerar_remessa_lote(lista_dados, competencia=None):
     
     linhas = []
     
+    # Determinar fornecedor baseado no primeiro item
+    tipo_primeiro = lista_dados[0].get("tipo_fornecedor", "FEDCORP")
+    
+    if tipo_primeiro == "CONDOMED":
+        config = CONDOMED_CONFIG
+    else:
+        config = FEDCORP_CONFIG
+    
     # REGISTRO 0 - HEADER
     header = (
         "0" +
-        FORNECEDOR_CNPJ.zfill(14) +
-        fixo(remover_acentos(FORNECEDOR_NOME).upper(), 60) +
-        CNPJ_ADMIN.zfill(14) +
-        fixo(remover_acentos(NOME_ADMIN).upper(), 60) +
+        config["fornecedor_cnpj"].zfill(14) +
+        fixo(remover_acentos(config["fornecedor_nome"]).upper(), 60) +
+        config["cnpj_admin"].zfill(14) +
+        fixo(remover_acentos(config["nome_admin"]).upper(), 60) +
         competencia +
         " " * 241 +
         "0001"
     )
     linhas.append(fixo(header, 400))
     
-    # REGISTROS 1, 2 e 3 para cada boleto
+    # REGISTROS 1, 2 e 3 para cada documento
     sequencial = 2
     for dados in lista_dados:
         # REGISTRO 1
@@ -350,8 +619,8 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         # REGISTRO 2
         registro_2 = (
             "2" +
-            fixo(COD_PRODUTO_ERP, 10) +
-            fixo(DESC_PRODUTO_ERP, 60) +
+            fixo(config["cod_produto_erp"], 10) +
+            fixo(config["desc_produto_erp"], 60) +
             "000000000,00" +
             dados["valor_formatado"] +
             dados["valor_formatado"] +
@@ -360,8 +629,13 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         )
         linhas.append(fixo(registro_2, 400))
         
-        # REGISTRO 3 com URL local
+        # REGISTRO 3 com URL local e número NFS-e (se houver)
         url_pdf = dados.get("url_local", "")
+        numero_nfse = dados.get("numero_nfse", "")
+        
+        # Adicionar número NFS-e à URL se existir
+        if numero_nfse:
+            url_pdf = f"{url_pdf} [NFS-e: {numero_nfse}]"
         
         tamanho_fixo = 1 + 4 + 10 + 4
         tamanho_url = len(url_pdf)
@@ -526,9 +800,10 @@ def static_files(filename):
             return jsonify({"erro": "Arquivo não encontrado"}), 404
 
 if __name__ == '__main__':
-    print("🚀 Iniciando FEDCORP ERP Dashboard...")
+    print("🚀 Iniciando FEDCORP ERP Dashboard v34...")
     print(f"📁 BASE_PATH: {BASE_PATH}")
     print(f"📂 PASTA_DOCS_PATH: {PASTA_DOCS_PATH}")
+    print("📦 Módulos: FEDCORP (Boletos) + CONDOMED (NFS-e)")
     
     # Pré-carregar condominios
     print("📝 Carregando dados de condominios...")
