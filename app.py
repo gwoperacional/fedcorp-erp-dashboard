@@ -29,15 +29,12 @@ GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 
 # Armazenamento persistente
-if os.getenv('RENDER'):
-    # No Render, usar /var/data (pasta persistente)
-    PASTA_DOCS_PATH = os.path.join("/var/data", "fedcorp_docs")
-elif os.path.exists(r"G:\Wallpaper\FEDCORP_PROCESSADOR"):
+if os.path.exists(r"G:\Wallpaper\FEDCORP_PROCESSADOR"):
     # Em desenvolvimento local
     PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 else:
-    # Fallback para /tmp
-    PASTA_DOCS_PATH = os.path.join("/tmp", "fedcorp_docs")
+    # No Render e em produção, usar pasta relativa do projeto
+    PASTA_DOCS_PATH = os.path.join(os.path.dirname(__file__), "docs_anexados")
 
 os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
 
