@@ -256,10 +256,17 @@ def extrair_dados_nfse(pdf_path):
                         dados["data_emissao_nf"] = match_data_emissao.group(1)
             
             # Extrair linha digitável (se houver boleto integrado)
-            regex_linha = r"\d{5}[\.]\s?\d{5}[\.]\s?\d{5}[\.]\s?\d{6}[\.]\s?\d{5}[\.]\s?\d{6}[\.]\s?\d[\.]\s?\d{14}"
+            # Padrão 1: Com pontos e espaços
+            regex_linha = r"\d{5}[\.]?\s?\d{5}\s+\d{5}[\.]?\s?\d{5}\s+\d{5}[\.]?\s?\d{5}\s+\d\s+\d{14}"
             match_linha = re.search(regex_linha, texto_completo)
             if match_linha:
                 dados["linha_digitavel"] = re.sub(r"\D", "", match_linha.group())
+            else:
+                # Padrão 2: Apenas dígitos (47 dígitos)
+                regex_linha2 = r"\d{47}"
+                match_linha = re.search(regex_linha2, texto_completo)
+                if match_linha:
+                    dados["linha_digitavel"] = match_linha.group()
     
     except Exception as e:
         print(f"Erro ao extrair dados da NFS-e: {e}")
