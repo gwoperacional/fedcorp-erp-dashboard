@@ -72,8 +72,8 @@ CONDOMED_CONFIG = {
     "fornecedor_cnpj": "27892999000187",
     "fornecedor_nome": "CONDOMED RIO SEGURANCA E MEDICINA DO TRABALHO LTDA",
     "cod_fornecedor_erp": "24367",
-    "cod_produto_erp": "MEDTRABALHO",
-    "desc_produto_erp": "Medicina e Seg. do Trabalho",
+    "cod_produto_erp": "MST",
+    "desc_produto_erp": "Medicina e Seg. Trabalho",
     "tipo": "NFS-E"
 }
 
@@ -590,29 +590,26 @@ def gerar_remessa_lote(lista_dados, competencia=None):
     # REGISTROS 1, 2 e 3 para cada documento
     sequencial = 2
     for dados in lista_dados:
-        # REGISTRO 1
+        # REGISTRO 1 - Construir concatenando strings com tamanho exato
         registro_1 = (
-            "1" +
-            dados["cod_cond"] +
-            "    " +
-            dados["cnpj"].zfill(14) +
-            dados["nome_cond"] +
-            dados["vencimento"] +
-            dados["valor_formatado"] +
-            dados["codigo_barras"] +
-            dados["valor_formatado"] +
-            "000000000,00" +
-            "000000000,00" +
-            "000000000,00" +
-            "000000000,00" +
-            "000000000,00" +
-            "N" +
-            dados["data_emissao"] +
-            "          " +
-            "     " +
-            "     " +
-            " " * 154 +
-            str(sequencial).zfill(4)
+            "1" +                                           # Pos 0: Tipo
+            fixo(dados["cod_cond"], 4) +                   # Pos 1-4: Código Cond
+            "    " +                                        # Pos 5-8: Espaços
+            dados["cnpj"].zfill(14) +                      # Pos 9-22: CNPJ
+            fixo(dados["nome_cond"], 50) +                 # Pos 23-72: Nome Cond
+            fixo(dados["vencimento"], 10) +                # Pos 73-82: Vencimento
+            fixo(dados["valor_formatado"], 12) +           # Pos 83-94: Valor
+            fixo(dados["codigo_barras"], 14) +             # Pos 95-108: Código Barras
+            fixo(dados["valor_formatado"], 12) +           # Pos 109-120: Valor 2
+            "000000000,00" +                                # Pos 121-132: Zeros 1
+            "000000000,00" +                                # Pos 133-144: Zeros 2
+            "000000000,00" +                                # Pos 145-156: Zeros 3
+            "000000000,00" +                                # Pos 157-168: Zeros 4
+            "000000000,00" +                                # Pos 169-180: Zeros 5
+            "N" +                                           # Pos 181: Letra N
+            fixo(dados["data_emissao"], 10) +              # Pos 182-191: Data Emissão
+            " " * 200 +                                     # Pos 192-391: Espaços
+            str(sequencial).zfill(4)                        # Pos 392-395: Sequencial
         )
         linhas.append(fixo(registro_1, 400))
         
@@ -738,7 +735,10 @@ def upload_files():
                 competencia = agora.strftime("%m%Y")
                 conteudo_remessa = gerar_remessa_lote(lista_dados_processados, competencia)
                 
-                nome_remessa = f"REMESSA_FEDCORP_LOTE_{agora.strftime('%Y%m%d%H%M%S')}.txt"
+                # Determinar nome baseado no tipo de fornecedor
+                tipo_fornecedor = lista_dados_processados[0].get("tipo_fornecedor", "FEDCORP")
+                prefixo = "REMESSA_CONDOMED" if tipo_fornecedor == "CONDOMED" else "REMESSA_FEDCORP"
+                nome_remessa = f"{prefixo}_LOTE_{agora.strftime('%Y%m%d%H%M%S')}.txt"
                 caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
                 
                 os.makedirs(GERADAS_PATH, exist_ok=True)
