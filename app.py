@@ -641,17 +641,8 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         )
         linhas.append(fixo(registro_2, 400))
         
-        # REGISTRO 3 com URL local e número NFS-e (se houver)
+        # REGISTRO 3 - URL do PDF (sem o número NFS-e, que já está no Registro 1)
         url_pdf = dados.get("url_local", "")
-        numero_nfse = dados.get("numero_nfse", "")
-        
-        # Adicionar número NFS-e à URL se existir
-        if numero_nfse:
-            url_pdf = f"{url_pdf} [NFS-e: {numero_nfse}]"
-        
-        tamanho_fixo = 1 + 4 + 10 + 4
-        tamanho_url = len(url_pdf)
-        tamanho_espacos = 400 - tamanho_fixo - tamanho_url
         
         trailer_boleto = (
             "3" +
