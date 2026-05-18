@@ -178,7 +178,8 @@ def extrair_dados_nfse(pdf_path):
         "vencimento": None,
         "valor": None,
         "numero_nfse": None,
-        "cnpj_pagador": None
+        "cnpj_pagador": None,
+        "data_emissao_nf": None
     }
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -238,8 +239,24 @@ def extrair_dados_nfse(pdf_path):
                 if match_venc:
                     dados["vencimento"] = match_venc.group(1)
             
+            # Extrair data de emissão da NFS-e
+            # Padrão 1: EMISSAO: DD/MM/AAAA
+            match_data_emissao = re.search(r"EMISS[ÃA]O:\s*(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+            if match_data_emissao:
+                dados["data_emissao_nf"] = match_data_emissao.group(1)
+            else:
+                # Padrão 2: DATA DE EMISSAO: DD/MM/AAAA
+                match_data_emissao = re.search(r"DATA DE EMISS[ÃA]O:\s*(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+                if match_data_emissao:
+                    dados["data_emissao_nf"] = match_data_emissao.group(1)
+                else:
+                    # Padrão 3: Data e Hora da emissão da NFS-e seguido de número e data
+                    match_data_emissao = re.search(r"Data e Hora da emiss[ãa]o da NFS-e[^\n]*\n\s*\d+\s+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+                    if match_data_emissao:
+                        dados["data_emissao_nf"] = match_data_emissao.group(1)
+            
             # Extrair linha digitável (se houver boleto integrado)
-            regex_linha = r"\d{5}[\.\s]?\d{5}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d[\.\s]?\d{14}"
+            regex_linha = r"\d{5}[\.]\s?\d{5}[\.]\s?\d{5}[\.]\s?\d{6}[\.]\s?\d{5}[\.]\s?\d{6}[\.]\s?\d[\.]\s?\d{14}"
             match_linha = re.search(regex_linha, texto_completo)
             if match_linha:
                 dados["linha_digitavel"] = re.sub(r"\D", "", match_linha.group())
@@ -499,7 +516,8 @@ def processar_nfse(nome_arquivo, caminho_entrada):
         # Preparar dados
         agora = datetime.now()
         vencimento = dados_pdf["vencimento"] if dados_pdf["vencimento"] else agora.strftime("%d/%m/%Y")
-        data_emissao = agora.strftime("%d/%m/%Y")
+        # Usar data de emissão da NF (se extraída), senão usar data atual
+        data_emissao = dados_pdf["data_emissao_nf"] if dados_pdf["data_emissao_nf"] else agora.strftime("%d/%m/%Y")
         valor_float = float(dados_pdf["valor"]) if dados_pdf["valor"] else 0.0
         valor_formatado = formatar_valor_ahreas(valor_float)
         cod_cond_erp = cond_info["codigo"].zfill(4)
@@ -544,6 +562,7 @@ def processar_nfse(nome_arquivo, caminho_entrada):
             "nome_cond": nome_cond_erp,
             "vencimento": vencimento,
             "data_emissao": data_emissao,
+            "data_emissao_nf": dados_pdf["data_emissao_nf"],
             "valor_formatado": valor_formatado,
             "valor_float": valor_float,
             "codigo_barras": codigo_barras,
