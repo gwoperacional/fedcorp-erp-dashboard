@@ -505,9 +505,17 @@ def processar_nfse(nome_arquivo, caminho_entrada):
         cod_cond_erp = cond_info["codigo"].zfill(4)
         nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
         
-        # Gerar código de barras (usar NFS-e como referência)
-        numero_nfse = dados_pdf["numero_nfse"] if dados_pdf["numero_nfse"] else "0000000000"
-        codigo_barras = numero_nfse.zfill(14)
+        # Converter linha digitável para código de barras (como em FEDCORP)
+        if not dados_pdf["linha_digitavel"]:
+            resultado["mensagem"] = "Não foi possível extrair a linha digitável do boleto"
+            return resultado
+        
+        codigo_barras = linha_digitavel_para_codigo_barras(dados_pdf["linha_digitavel"])
+        if not codigo_barras:
+            resultado["mensagem"] = "Código de barras inválido"
+            return resultado
+        
+        numero_nfse = dados_pdf["numero_nfse"] if dados_pdf["numero_nfse"] else None
         
         # Copiar para pasta local
         ano_atual = agora.strftime("%Y")
@@ -590,29 +598,33 @@ def gerar_remessa_lote(lista_dados, competencia=None):
     # REGISTROS 1, 2 e 3 para cada documento
     sequencial = 2
     for dados in lista_dados:
-        # REGISTRO 1 - Exatamente igual ao original FEDCORP
+        # REGISTRO 1 - Conforme layout de importação (400 chars)
+        # Campos conforme especificação do layout
         registro_1 = (
-            "1" +
-            dados["cod_cond"] +
-            "    " +
-            dados["cnpj"].zfill(14) +
-            dados["nome_cond"] +
-            dados["vencimento"] +
-            dados["valor_formatado"] +
-            dados["codigo_barras"] +
-            dados["valor_formatado"] +
-            "000000000,00" +
-            "000000000,00" +
-            "000000000,00" +
-            "000000000,00" +
-            "000000000,00" +
-            "N" +
-            dados["data_emissao"] +
-            "          " +
-            "     " +
-            "     " +
-            " " * 154 +
-            str(sequencial).zfill(4)
+            "1" +                                                   # Pos 001: Tipo de registro
+            fixo(dados["cod_cond"], 4) +                           # Pos 002-005: Código do condomínio
+            "0   " +                                                # Pos 006-009: Código do bloco (0 + 3 brancos)
+            dados["cnpj"].zfill(14) +                              # Pos 010-023: CNPJ
+            fixo(dados["nome_cond"], 50) +                         # Pos 024-073: Nome do condomínio
+            fixo(dados["vencimento"], 10) +                        # Pos 074-083: Data vencimento (DD/MM/AAAA)
+            fixo(dados["valor_formatado"], 12) +                   # Pos 084-095: Valor do título (líquido)
+            fixo(dados["codigo_barras"], 44) +                     # Pos 096-139: Código de barras (44 chars!)
+            fixo(dados["valor_formatado"], 12) +                   # Pos 140-151: Valor total da NF sem retenção
+            "000000000,00" +                                        # Pos 152-163: IRRF
+            "000000000,00" +                                        # Pos 164-175: ISS
+            "000000000,00" +                                        # Pos 176-187: INSS
+            "000000000,00" +                                        # Pos 188-199: CSSL/PIS/COFINS
+            "000000000,00" +                                        # Pos 200-211: Descontos
+            "N" +                                                   # Pos 212: Nota fiscal de venda (S/N)
+            fixo(dados.get("data_emissao_nf", dados["data_emissao"]), 10) +  # Pos 213-222: Data emissão NF
+            fixo(dados.get("numero_nfse", ""), 10) +               # Pos 223-232: Número da NF
+            "     " +                                                # Pos 233-237: Série da NF
+            "     " +                                                # Pos 238-242: Tipo da NF
+            "000000000,00" +                                        # Pos 243-254: CSLL
+            "000000000,00" +                                        # Pos 255-266: PIS
+            "000000000,00" +                                        # Pos 267-278: COFINS
+            " " * 118 +                                             # Pos 279-396: Uso Ahreas
+            str(sequencial).zfill(4)                                # Pos 397-400: Sequencial
         )
         linhas.append(fixo(registro_1, 400))
         
