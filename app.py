@@ -620,7 +620,8 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         registro_2 = (
             "2" +
             fixo(config["cod_produto_erp"], 10) +
-            fixo(config["desc_produto_erp"], 60) +
+            " " +
+            fixo(config["desc_produto_erp"], 59) +
             "000000000,00" +
             dados["valor_formatado"] +
             dados["valor_formatado"] +
