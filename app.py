@@ -28,13 +28,18 @@ ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
 GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 
-# Armazenamento local no Render
-PASTA_DOCS_PATH = os.path.join("/tmp", "fedcorp_docs")
-os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
-
-# Tentar usar pasta local se disponível
-if os.path.exists(r"G:\Wallpaper\FEDCORP_PROCESSADOR"):
+# Armazenamento persistente
+if os.getenv('RENDER'):
+    # No Render, usar /var/data (pasta persistente)
+    PASTA_DOCS_PATH = os.path.join("/var/data", "fedcorp_docs")
+elif os.path.exists(r"G:\Wallpaper\FEDCORP_PROCESSADOR"):
+    # Em desenvolvimento local
     PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
+else:
+    # Fallback para /tmp
+    PASTA_DOCS_PATH = os.path.join("/tmp", "fedcorp_docs")
+
+os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
@@ -530,14 +535,15 @@ def processar_nfse(nome_arquivo, caminho_entrada):
         cod_cond_erp = cond_info["codigo"].zfill(4)
         nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
         
-        # Converter linha digitável para código de barras (como em FEDCORP)
+        # Usar linha digitável como código de barras (CONDOMED usa a linha digitável diretamente)
         if not dados_pdf["linha_digitavel"]:
             resultado["mensagem"] = "Não foi possível extrair a linha digitável do boleto"
             return resultado
         
-        codigo_barras = linha_digitavel_para_codigo_barras(dados_pdf["linha_digitavel"])
-        if not codigo_barras:
-            resultado["mensagem"] = "Código de barras inválido"
+        # Para CONDOMED, usar a linha digitável diretamente (sem conversão)
+        codigo_barras = dados_pdf["linha_digitavel"]
+        if len(codigo_barras) != 47:
+            resultado["mensagem"] = "Código de barras inválido (tamanho incorreto)"
             return resultado
         
         numero_nfse = dados_pdf["numero_nfse"] if dados_pdf["numero_nfse"] else None
