@@ -174,9 +174,20 @@ def extrair_dados_nfse(pdf_path):
                     dados["cnpj_pagador"] = cnpj[:14]
             
             # Extrair número da NFS-e
-            match_nfse = re.search(r"(?:NFS-e|NF-e|Nota Fiscal)[:\s]+(\d+)", texto_completo, re.IGNORECASE)
+            # Procurar padrões como "Número: 728" ou "NFS-e: 728" (máximo 10 dígitos)
+            match_nfse = re.search(r"(?:N(?:úmero da )?FS-e|Número da NFS-e|NFS-e)[:\s]+(\d{1,10})(?:\D|$)", texto_completo, re.IGNORECASE)
             if match_nfse:
-                dados["numero_nfse"] = match_nfse.group(1)
+                numero_nfse = match_nfse.group(1).strip()
+                # Garantir que é um número válido (não a chave de acesso de 50 dígitos)
+                if numero_nfse and len(numero_nfse) <= 10:
+                    dados["numero_nfse"] = numero_nfse
+            else:
+                # Se não encontrar, procurar por "Número: XXX" próximo a "NFS-e"
+                match_nfse2 = re.search(r"NFS-e[\s\S]{0,100}?Número[:\s]+(\d{1,10})", texto_completo, re.IGNORECASE)
+                if match_nfse2:
+                    numero_nfse = match_nfse2.group(1).strip()
+                    if numero_nfse and len(numero_nfse) <= 10:
+                        dados["numero_nfse"] = numero_nfse
             
             # Extrair data de emissão
             match_emissao = re.search(r"(?:Data de Emissão|Emissão|Emitida em)[:\s]+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
@@ -311,14 +322,19 @@ def gerar_remessa_lote(lista_dados, competencia):
         
         # Registro 2 (Detalhe Itens)
         registro_2 = (
-            "2" +                                                    # Tipo
-            fixo(COD_PRODUTO_ERP, 10) +                            # Código Produto
-            fixo(DESC_PRODUTO_ERP, 60) +                           # Descrição Produto
-            fixo("", 12) +                                          # Valor Item Produtos
-            fixo("", 12) +                                          # Valor Item Serviços
-            formatar_valor_ahreas(dados.get("valor", 0)) +         # Valor Total Item
-            fixo("", 289) +                                         # Uso Ahreas
-            numerico(sequencial, 4)                                 # Sequencial
+            "2" +                                                    # Tipo (Pos 001)
+            fixo(COD_PRODUTO_ERP, 10) +                            # Código Produto (Pos 002-011)
+            fixo(DESC_PRODUTO_ERP, 60) +                           # Descrição Produto (Pos 012-071)
+            fixo("", 12) +                                          # Valor Item Produtos (Pos 072-083)
+            fixo("", 12) +                                          # Valor Item Serviços (Pos 084-095)
+            formatar_valor_ahreas(dados.get("valor", 0)) +         # Valor Total Item (Pos 096-107)
+            fixo("", 12) +                                          # IRRF (Pos 108-119)
+            fixo("", 12) +                                          # ISS (Pos 120-131)
+            fixo("", 12) +                                          # INSS (Pos 132-143)
+            fixo("", 12) +                                          # CSSL/PIS/COFINS (Pos 144-155)
+            fixo("", 12) +                                          # Descontos (Pos 156-167)
+            fixo("", 232) +                                         # Uso Ahreas (Pos 168-399)
+            numerico(sequencial, 4)                                 # Sequencial (Pos 400)
         )
         linhas.append(registro_2)
         
