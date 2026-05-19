@@ -28,13 +28,15 @@ ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
 GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
 NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 
-# Armazenamento local no Render
-PASTA_DOCS_PATH = os.path.join("/tmp", "fedcorp_docs")
-os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
-
-# Tentar usar pasta local se disponível
+# Armazenamento persistente
 if os.path.exists(r"G:\Wallpaper\FEDCORP_PROCESSADOR"):
+    # Em desenvolvimento local
     PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
+else:
+    # No Render e em produção, usar pasta relativa do projeto
+    PASTA_DOCS_PATH = os.path.join(os.path.dirname(__file__), "docs_anexados")
+
+os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
@@ -178,7 +180,8 @@ def extrair_dados_nfse(pdf_path):
         "vencimento": None,
         "valor": None,
         "numero_nfse": None,
-        "cnpj_pagador": None
+        "cnpj_pagador": None,
+        "data_emissao_nf": None
     }
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -238,11 +241,36 @@ def extrair_dados_nfse(pdf_path):
                 if match_venc:
                     dados["vencimento"] = match_venc.group(1)
             
+            # Extrair data de emissão da NFS-e
+            # Padrão 1: EMISSAO: DD/MM/AAAA
+            match_data_emissao = re.search(r"EMISS[ÃA]O:\s*(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+            if match_data_emissao:
+                dados["data_emissao_nf"] = match_data_emissao.group(1)
+            else:
+                # Padrão 2: DATA DE EMISSAO: DD/MM/AAAA
+                match_data_emissao = re.search(r"DATA DE EMISS[ÃA]O:\s*(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+                if match_data_emissao:
+                    dados["data_emissao_nf"] = match_data_emissao.group(1)
+                else:
+                    # Padrão 3: Data e Hora da emissão da NFS-e seguido de número e data
+                    match_data_emissao = re.search(r"Data e Hora da emiss[ãa]o da NFS-e[^\n]*\n\s*\d+\s+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+                    if match_data_emissao:
+                        dados["data_emissao_nf"] = match_data_emissao.group(1)
+            
             # Extrair linha digitável (se houver boleto integrado)
-            regex_linha = r"\d{5}[\.\s]?\d{5}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d[\.\s]?\d{14}"
+            # Padrão 1: Com pontos e espaços (XXXXX.XXXXX XXXXX.XXXXX XXXXX.XXXXX X XXXXX...)
+            # Formato: 033XX.XXXXX XXXXX.XXXXXX XXXXX.XXXXXX X XXXXX...
+            regex_linha = r"033\d{2}\.\d{5}\s+\d{5}\.\d{6}\s+\d{5}\.\d{6}\s+\d\s+\d{14}"
             match_linha = re.search(regex_linha, texto_completo)
             if match_linha:
                 dados["linha_digitavel"] = re.sub(r"\D", "", match_linha.group())
+            else:
+                # Padrão 2: Apenas dígitos (47 dígitos), mas não a Chave de Acesso (50 dígitos)
+                # Procurar por 47 dígitos que não estão seguidos por mais dígitos
+                regex_linha2 = r"\d{47}(?!\d)"
+                match_linha = re.search(regex_linha2, texto_completo)
+                if match_linha:
+                    dados["linha_digitavel"] = match_linha.group()
     
     except Exception as e:
         print(f"Erro ao extrair dados da NFS-e: {e}")
@@ -499,20 +527,22 @@ def processar_nfse(nome_arquivo, caminho_entrada):
         # Preparar dados
         agora = datetime.now()
         vencimento = dados_pdf["vencimento"] if dados_pdf["vencimento"] else agora.strftime("%d/%m/%Y")
-        data_emissao = agora.strftime("%d/%m/%Y")
+        # Usar data de emissão da NF (se extraída), senão usar data atual
+        data_emissao = dados_pdf["data_emissao_nf"] if dados_pdf["data_emissao_nf"] else agora.strftime("%d/%m/%Y")
         valor_float = float(dados_pdf["valor"]) if dados_pdf["valor"] else 0.0
         valor_formatado = formatar_valor_ahreas(valor_float)
         cod_cond_erp = cond_info["codigo"].zfill(4)
         nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
         
-        # Converter linha digitável para código de barras (como em FEDCORP)
+        # Usar linha digitável como código de barras (CONDOMED usa a linha digitável diretamente)
         if not dados_pdf["linha_digitavel"]:
             resultado["mensagem"] = "Não foi possível extrair a linha digitável do boleto"
             return resultado
         
-        codigo_barras = linha_digitavel_para_codigo_barras(dados_pdf["linha_digitavel"])
-        if not codigo_barras:
-            resultado["mensagem"] = "Código de barras inválido"
+        # Para CONDOMED, usar a linha digitável diretamente (sem conversão)
+        codigo_barras = dados_pdf["linha_digitavel"]
+        if len(codigo_barras) != 47:
+            resultado["mensagem"] = "Código de barras inválido (tamanho incorreto)"
             return resultado
         
         numero_nfse = dados_pdf["numero_nfse"] if dados_pdf["numero_nfse"] else None
@@ -544,6 +574,7 @@ def processar_nfse(nome_arquivo, caminho_entrada):
             "nome_cond": nome_cond_erp,
             "vencimento": vencimento,
             "data_emissao": data_emissao,
+            "data_emissao_nf": dados_pdf["data_emissao_nf"],
             "valor_formatado": valor_formatado,
             "valor_float": valor_float,
             "codigo_barras": codigo_barras,
@@ -641,17 +672,8 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         )
         linhas.append(fixo(registro_2, 400))
         
-        # REGISTRO 3 com URL local e número NFS-e (se houver)
+        # REGISTRO 3 - URL do PDF (sem o número NFS-e, que já está no Registro 1)
         url_pdf = dados.get("url_local", "")
-        numero_nfse = dados.get("numero_nfse", "")
-        
-        # Adicionar número NFS-e à URL se existir
-        if numero_nfse:
-            url_pdf = f"{url_pdf} [NFS-e: {numero_nfse}]"
-        
-        tamanho_fixo = 1 + 4 + 10 + 4
-        tamanho_url = len(url_pdf)
-        tamanho_espacos = 400 - tamanho_fixo - tamanho_url
         
         trailer_boleto = (
             "3" +
