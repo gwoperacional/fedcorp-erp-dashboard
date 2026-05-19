@@ -542,7 +542,7 @@ def processar_nfse(nome_arquivo, caminho_entrada):
             resultado["mensagem"] = "Código de barras inválido"
             return resultado
         
-        numero_nfse = dados_pdf["numero_nfse"] if dados_pdf["numero_nfse"] else None
+        numero_nfse = dados_pdf["numero_nfse"] if dados_pdf["numero_nfse"] is not None else "0"
         
         # Copiar para pasta local
         ano_atual = agora.strftime("%Y")
