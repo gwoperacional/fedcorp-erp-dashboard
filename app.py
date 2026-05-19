@@ -633,7 +633,7 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         registro_1 = (
             "1" +                                                   # Pos 001: Tipo de registro
             fixo(dados["cod_cond"], 4) +                           # Pos 002-005: Código do condomínio
-            "0   " +                                                # Pos 006-009: Código do bloco (0 + 3 brancos)
+            "    " +                                                # Pos 006-009: Código do bloco (4 brancos)
             dados["cnpj"].zfill(14) +                              # Pos 010-023: CNPJ
             fixo(dados["nome_cond"], 50) +                         # Pos 024-073: Nome do condomínio
             fixo(dados["vencimento"], 10) +                        # Pos 074-083: Data vencimento (DD/MM/AAAA)
