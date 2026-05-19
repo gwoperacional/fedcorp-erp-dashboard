@@ -650,9 +650,9 @@ def gerar_remessa_lote(lista_dados, competencia=None):
             fixo(dados.get("numero_nfse", ""), 10) +               # Pos 223-232: Número da NF
             "     " +                                                # Pos 233-237: Série da NF
             "     " +                                                # Pos 238-242: Tipo da NF
-            "000000000,00" +                                        # Pos 243-254: CSLL
-            "000000000,00" +                                        # Pos 255-266: PIS
-            "000000000,00" +                                        # Pos 267-278: COFINS
+            "            " +                                        # Pos 243-254: CSLL (espaços em branco)
+            "            " +                                        # Pos 255-266: PIS (espaços em branco)
+            "            " +                                        # Pos 267-278: COFINS (espaços em branco)
             " " * 118 +                                             # Pos 279-396: Uso Ahreas
             str(sequencial).zfill(4)                                # Pos 397-400: Sequencial
         )
