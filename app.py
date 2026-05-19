@@ -165,9 +165,11 @@ def extrair_dados_nfse(pdf_path):
                     texto_completo += t + "\n"
             
             # Extrair CNPJ do pagador (tomador do serviço)
-            match_cnpj = re.search(r"(?:CNPJ|CPF)[:\s]+(\d{2}\.?\d{3}\.?\d{3}/?0001-?\d{2})", texto_completo)
-            if match_cnpj:
-                cnpj = re.sub(r"\D", "", match_cnpj.group(1))
+            # Procurar todos os CNPJs e pegar o último (que é o condominio)
+            cnpjs_encontrados = re.findall(r"\d{2}\.?\d{3}\.?\d{3}/?0001-?\d{2}", texto_completo)
+            if cnpjs_encontrados:
+                # Pegar o último CNPJ (que é o condominio, não o fornecedor)
+                cnpj = re.sub(r"\D", "", cnpjs_encontrados[-1])
                 if len(cnpj) >= 14:
                     dados["cnpj_pagador"] = cnpj[:14]
             
