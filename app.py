@@ -534,15 +534,14 @@ def processar_nfse(nome_arquivo, caminho_entrada):
         cod_cond_erp = cond_info["codigo"].zfill(4)
         nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
         
-        # Usar linha digitável como código de barras (CONDOMED usa a linha digitável diretamente)
+        # Converter linha digitável para código de barras
         if not dados_pdf["linha_digitavel"]:
             resultado["mensagem"] = "Não foi possível extrair a linha digitável do boleto"
             return resultado
         
-        # Para CONDOMED, usar a linha digitável diretamente (sem conversão)
-        codigo_barras = dados_pdf["linha_digitavel"]
-        if len(codigo_barras) != 47:
-            resultado["mensagem"] = "Código de barras inválido (tamanho incorreto)"
+        codigo_barras = linha_digitavel_para_codigo_barras(dados_pdf["linha_digitavel"])
+        if not codigo_barras:
+            resultado["mensagem"] = "Código de barras inválido"
             return resultado
         
         numero_nfse = dados_pdf["numero_nfse"] if dados_pdf["numero_nfse"] else None
