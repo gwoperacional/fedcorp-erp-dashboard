@@ -333,8 +333,8 @@ def gerar_remessa_lote(lista_dados, competencia):
             fixo("", 12) +                                          # INSS (Pos 132-143)
             fixo("", 12) +                                          # CSSL/PIS/COFINS (Pos 144-155)
             fixo("", 12) +                                          # Descontos (Pos 156-167)
-            fixo("", 232) +                                         # Uso Ahreas (Pos 168-399)
-            numerico(sequencial, 4)                                 # Sequencial (Pos 400)
+            fixo("", 229) +                                         # Uso Ahreas (Pos 168-396)
+            numerico(sequencial, 4)                                 # Sequencial (Pos 397-400)
         )
         linhas.append(registro_2)
         
@@ -347,8 +347,8 @@ def gerar_remessa_lote(lista_dados, competencia):
             "0001" +                                                # Sequencial Imagens (Pos 002-005)
             numero_nfse_str +                                       # Número NF (Pos 006-015, 10 dígitos)
             fixo(url_completa, 300) +                               # URL Documento (Pos 016-315, 300 chars)
-            fixo("", 84) +                                          # Uso Ahreas (Pos 316-399)
-            numerico(sequencial, 4)                                 # Sequencial (Pos 400)
+            fixo("", 81) +                                          # Uso Ahreas (Pos 316-396)
+            numerico(sequencial, 4)                                 # Sequencial (Pos 397-400)
         )
         linhas.append(registro_3)
         
