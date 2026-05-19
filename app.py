@@ -321,10 +321,11 @@ def gerar_remessa_lote(lista_dados, competencia):
         linhas.append(registro_2)
         
         # Registro 3 (Detalhe Documentos)
+        numero_nfse_str = str(dados.get("numero_nfse", "0")).zfill(10)
         registro_3 = (
             "3" +                                                    # Tipo
             "0001" +                                                # Sequencial Imagens
-            numerico(dados.get("numero_nfse", "0"), 10) +          # Número NF
+            numero_nfse_str +                                       # Número NF (10 dígitos com zeros)
             fixo(dados.get("url_pdf", ""), 300) +                  # URL Documento
             fixo("", 300) +                                         # Uso Ahreas
             numerico(sequencial, 4)                                 # Sequencial
