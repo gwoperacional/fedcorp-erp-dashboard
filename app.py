@@ -753,6 +753,8 @@ def upload_files():
                     except:
                         pass
                 
+                    gc.collect()
+                
                 except Exception as e:
                     resultados["erros"] += 1
                     resultados["detalhes"].append({
@@ -779,6 +781,8 @@ def upload_files():
                     f.write(conteudo_remessa)
                 
                 resultados["remessa"] = nome_remessa
+                lista_dados_processados.clear()
+                gc.collect()
             
             except Exception as e:
                 resultados["erro_lote"] = str(e)
