@@ -339,14 +339,16 @@ def gerar_remessa_lote(lista_dados, competencia):
         linhas.append(registro_2)
         
         # Registro 3 (Detalhe Documentos)
-        numero_nfse_str = str(dados.get("numero_nfse", "0")).zfill(10)
+        numero_nfse_str = str(dados.get("numero_nfse", "0")).rjust(10)  # Número NF (10 dígitos, espaços à esquerda)
+        # URL completa com domínio
+        url_completa = "https://fedcorp-erp-dashboard.onrender.com" + dados.get("url_pdf", "")
         registro_3 = (
-            "3" +                                                    # Tipo
-            "0001" +                                                # Sequencial Imagens
-            numero_nfse_str +                                       # Número NF (10 dígitos com zeros)
-            fixo(dados.get("url_pdf", ""), 300) +                  # URL Documento
-            fixo("", 300) +                                         # Uso Ahreas
-            numerico(sequencial, 4)                                 # Sequencial
+            "3" +                                                    # Tipo (Pos 001)
+            "0001" +                                                # Sequencial Imagens (Pos 002-005)
+            numero_nfse_str +                                       # Número NF (Pos 006-015, 10 dígitos)
+            fixo(url_completa, 300) +                               # URL Documento (Pos 016-315, 300 chars)
+            fixo("", 84) +                                          # Uso Ahreas (Pos 316-399)
+            numerico(sequencial, 4)                                 # Sequencial (Pos 400)
         )
         linhas.append(registro_3)
         
