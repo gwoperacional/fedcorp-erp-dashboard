@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from io import BytesIO
 import zipfile
+import gc
 
 # Configurar o caminho correto para os arquivos estáticos
 static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
