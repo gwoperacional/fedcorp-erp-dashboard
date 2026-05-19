@@ -14,7 +14,7 @@ import pdfplumber
 import tempfile
 import unicodedata
 from datetime import datetime
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from openpyxl import load_workbook
 from io import BytesIO
@@ -28,7 +28,8 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
 
 # Caminhos
 BASE_PATH = os.path.dirname(__file__)
-PASTA_DOCS_PATH = os.path.join(BASE_PATH, "docs_anexados")
+# Usar /tmp para Render (filesystem efêmero)
+PASTA_DOCS_PATH = os.path.join("/tmp", "condomed_docs")
 TEMP_UPLOAD_PATH = os.path.join(tempfile.gettempdir(), "condomed_uploads")
 
 os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
@@ -631,9 +632,9 @@ def api_gerar_remessa():
 def servir_pdf(year, month, filename):
     """Serve PDFs salvos"""
     try:
-        caminho = os.path.join(PASTA_DOCS_PATH, year, month, filename)
-        if os.path.exists(caminho):
-            return send_file(caminho, mimetype='application/pdf')
+        caminho_dir = os.path.join(PASTA_DOCS_PATH, year, month)
+        if os.path.exists(os.path.join(caminho_dir, filename)):
+            return send_from_directory(caminho_dir, filename, mimetype='application/pdf')
         else:
             return jsonify({"erro": "Arquivo não encontrado"}), 404
     except Exception as e:
