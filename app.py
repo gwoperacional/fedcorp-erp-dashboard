@@ -676,11 +676,11 @@ def gerar_remessa_lote(lista_dados, competencia=None):
         
         trailer_boleto = (
             "3" +
-            "0001" +
-            "0000000000" +
-            fixo(url_pdf, 300) +
-            " " * 81 +
-            str(sequencial).zfill(4)
+            "0001" +                                                   # Sequencial das imagens
+            fixo(dados.get("numero_nfse", ""), 10) +                 # Número da NF
+            fixo(url_pdf, 300) +                                        # URL do documento
+            " " * 81 +                                                # Uso Ahreas
+            str(sequencial).zfill(4)                                   # Sequencial de registro
         )
         linhas.append(fixo(trailer_boleto, 400))
         
