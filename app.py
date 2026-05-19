@@ -196,10 +196,8 @@ def extrair_dados_nfse(pdf_path):
             if match_nfse:
                 dados["numero_nfse"] = match_nfse.group(1)
             else:
-                # Tenta padrão alternativo
-                match_nfse = re.search(r"Número da NFS-e\s+(\d+)", texto_completo)
-                if match_nfse:
-                    dados["numero_nfse"] = match_nfse.group(1)
+                # Se não encontrar, usar valor padrão
+                dados["numero_nfse"] = "0"
             
             # Extrair CNPJ do pagador (tomador do serviço)
             # Tenta primeiro o padrão formatado
