@@ -1,73 +1,119 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-CONDOMED ERP Import Dashboard
-Processador de Notas Fiscais de Serviço (NFS-e) para importação no ERP Ahreas
-Baseado na documentação oficial de layout de importação
-"""
-
 import os
+import shutil
+import unicodedata
 import re
-import gc
-import json
 import pdfplumber
 import tempfile
-import unicodedata
+import json
+import subprocess
+from flask import Flask, jsonify, send_from_directory, request, send_file
 from datetime import datetime
-from flask import Flask, jsonify, request, send_file, send_from_directory
-from werkzeug.utils import secure_filename
+from typing import List, Dict, Any
 from openpyxl import load_workbook
+from werkzeug.utils import secure_filename
 from io import BytesIO
+import zipfile
 
-# ============================================================================
-# CONFIGURAÇÕES
-# ============================================================================
+# Configurar o caminho correto para os arquivos estáticos
+static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
+if not os.path.exists(static_folder):
+    static_folder = os.path.join(os.path.dirname(__file__), 'dist')
 
-app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
+app = Flask(__name__, static_folder=static_folder, static_url_path='')
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 
-# Caminhos
-BASE_PATH = os.path.dirname(__file__)
-# Usar /tmp para Render (filesystem efêmero)
-PASTA_DOCS_PATH = os.path.join("/tmp", "condomed_docs")
-TEMP_UPLOAD_PATH = os.path.join(tempfile.gettempdir(), "condomed_uploads")
+# Configurações de Caminhos
+BASE_PATH = os.getenv("BASE_PATH", r"G:\Wallpaper\FEDCORP_PROCESSADOR")
+ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
+GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
+NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 
+# Armazenamento local no Render
+PASTA_DOCS_PATH = os.path.join("/tmp", "fedcorp_docs")
 os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
+
+# Tentar usar pasta local se disponível
+if os.path.exists(r"G:\Wallpaper\FEDCORP_PROCESSADOR"):
+    PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
+
+# Possíveis caminhos para o arquivo de condominios
+POSSIBLE_PATHS = [
+    os.path.join(BASE_PATH, "BASE", "DADOS_CONDOMINIOS.xlsx"),
+    os.path.join(os.path.dirname(__file__), "BASE", "DADOS_CONDOMINIOS.xlsx"),
+    os.path.join(os.path.dirname(__file__), "DADOS_CONDOMINIOS.xlsx"),
+    "/app/BASE/DADOS_CONDOMINIOS.xlsx",
+    "BASE/DADOS_CONDOMINIOS.xlsx",
+]
+
+# Pasta temporária para uploads
+TEMP_UPLOAD_PATH = os.path.join(tempfile.gettempdir(), "fedcorp_uploads")
 os.makedirs(TEMP_UPLOAD_PATH, exist_ok=True)
 
-# Dados CONDOMED
+# Dados Fixos para Seguro de Vida (FEDCORP)
 CNPJ_ADMIN = "26231209000150"
 NOME_ADMIN = "GW ADMINISTRADORA DE CONDOMINIOS LTDA"
-FORNECEDOR_CNPJ = "27892999000187"
-FORNECEDOR_NOME = "CONDOMED RIO SEGURANCA E MEDICINA DO TRABALHO LTDA"
-COD_FORNECEDOR_ERP = "24367"
-COD_PRODUTO_ERP = "MST"
+FORNECEDOR_CNPJ = "35315360000167"
+FORNECEDOR_NOME = "FEDCORP ADMINISTRADORA DE BENEFICIOS LTDA"
+COD_FORNECEDOR_ERP = "24196"
+COD_PRODUTO_ERP = "SEGUROVIDA"
 DESC_PRODUTO_ERP = ""
 
-# Cache de condominios
-CONDOMINIOS_CACHE = {}
+# Cache de condominios em memória
+CONDOMINIOS_CACHE = None
 CACHE_TIMESTAMP = None
 
-# ============================================================================
-# FUNÇÕES UTILITÁRIAS
-# ============================================================================
-
 def remover_acentos(texto):
-    """Remove acentos de texto"""
-    if not texto:
-        return ""
+    if not texto: return ""
     return unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("ASCII")
 
 def fixo(texto, tamanho):
-    """Preenche texto com espaços até o tamanho especificado"""
+    """Preenche texto com espaços em branco até o tamanho especificado"""
     return str(texto).ljust(tamanho)[:tamanho]
 
-def numerico(valor, tamanho):
-    """Preenche número com zeros à esquerda"""
-    return str(valor).zfill(tamanho)[:tamanho]
+def extrair_cnpj_do_nome_arquivo(nome_arquivo):
+    match = re.search(r"\d{14}", nome_arquivo)
+    return match.group() if match else None
+
+def extrair_dados_pdf(pdf_path):
+    dados = {"linha_digitavel": None, "numero_nota": None, "vencimento": None, "valor": None}
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            texto_completo = ""
+            for pagina in pdf.pages:
+                t = pagina.extract_text()
+                if t: texto_completo += t + "\n"
+            
+            # Extrair linha digitável
+            regex_linha = r"\d{5}[\.\s]?\d{5}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d[\.\s]?\d{14}"
+            match_linha = re.search(regex_linha, texto_completo)
+            if match_linha:
+                dados["linha_digitavel"] = re.sub(r"\D", "", match_linha.group())
+            
+            # Extrair número da nota
+            match_nota = re.search(r"(?:FATURA|NOTA|DOC|Nº|NUMERO)[:\s]+(\d+)", texto_completo, re.IGNORECASE)
+            if match_nota:
+                dados["numero_nota"] = match_nota.group(1)
+            
+            # Extrair vencimento
+            match_venc = re.search(r"Vencimento\s+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
+            if match_venc:
+                dados["vencimento"] = match_venc.group(1)
+            else:
+                match_venc = re.search(r"ATE O VENCIMENTO\s+(\d{2}/\d{2}/\d{4})", texto_completo)
+                if match_venc:
+                    dados["vencimento"] = match_venc.group(1)
+            
+            # Extrair valor
+            match_valor = re.search(r"VALOR TOTAL:?\s*R\$\s*([\d\.,]+)", texto_completo, re.IGNORECASE)
+            if match_valor:
+                dados["valor"] = match_valor.group(1).replace(".", "").replace(",", ".")
+    except Exception as e:
+        print(f"Erro ao extrair dados do PDF: {e}")
+    
+    return dados
 
 def linha_digitavel_para_codigo_barras(linha):
-    """Converte linha digitável para código de barras (44 caracteres)"""
+    """Converte linha digitável para código de barras"""
     linha = re.sub(r"\D", "", linha)
     
     if len(linha) == 50:
@@ -91,558 +137,402 @@ def linha_digitavel_para_codigo_barras(linha):
         return None
 
 def formatar_valor_ahreas(valor_float):
-    """Formata valor para 12 posições com vírgula (999999999,99)"""
-    try:
-        return f"{float(valor_float):012.2f}".replace(".", ",")
-    except:
-        return "000000000,00"
+    """Formata valor para 12 posições com vírgula"""
+    return f"{valor_float:012.2f}".replace(".", ",")
 
 def carregar_condominios():
-    """Carrega condominios do arquivo Excel"""
+    """Carrega condominios de arquivo Excel"""
     global CONDOMINIOS_CACHE, CACHE_TIMESTAMP
     
-    # Usar cache se válido (5 minutos)
-    if CONDOMINIOS_CACHE and CACHE_TIMESTAMP:
-        if (datetime.now() - CACHE_TIMESTAMP).seconds < 300:
+    if CONDOMINIOS_CACHE is not None:
+        if CACHE_TIMESTAMP and (datetime.now() - CACHE_TIMESTAMP).seconds < 300:
             return CONDOMINIOS_CACHE
     
     condominios = {}
+    arquivo_encontrado = None
     
-    # Procurar arquivo em possíveis locais
-    possible_paths = [
-        os.path.join(BASE_PATH, "BASE", "DADOS_CONDOMINIOS.xlsx"),
-        os.path.join(BASE_PATH, "DADOS_CONDOMINIOS.xlsx"),
-        "/app/BASE/DADOS_CONDOMINIOS.xlsx",
-    ]
-    
-    for caminho in possible_paths:
+    for caminho in POSSIBLE_PATHS:
         if os.path.exists(caminho):
-            try:
-                wb = load_workbook(caminho)
-                ws = wb.active
-                for row in ws.iter_rows(min_row=2, values_only=True):
-                    if row and len(row) > 3 and row[3]:
-                        cnpj = str(row[3]).strip()
-                        cnpj = re.sub(r"\D", "", cnpj)
-                        if len(cnpj) >= 14:
-                            cnpj = cnpj[:14]
-                            condominios[cnpj] = {
-                                "nome": str(row[1]) if row[1] else "",
-                                "codigo": numerico(row[0], 4) if row[0] else "0000"
-                            }
-                CONDOMINIOS_CACHE = condominios
-                CACHE_TIMESTAMP = datetime.now()
-                return condominios
-            except Exception as e:
-                print(f"Erro ao carregar condominios: {e}")
-                continue
+            arquivo_encontrado = caminho
+            print(f"✅ Arquivo de condominios encontrado em: {caminho}")
+            break
     
-    return {}
+    if arquivo_encontrado:
+        try:
+            wb = load_workbook(arquivo_encontrado)
+            ws = wb.active
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if row[3]:
+                    cnpj = str(row[3]).strip()
+                    cnpj = cnpj.replace(".", "").replace("-", "").replace("/", "")
+                    if len(cnpj) >= 14:
+                        cnpj = cnpj[:14]
+                    
+                    condominios[cnpj] = {
+                        "nome": str(row[1]) if row[1] else "",
+                        "codigo": str(int(row[0])).zfill(4) if row[0] else "0000"
+                    }
+            print(f"✅ Carregados {len(condominios)} condominios")
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar: {e}")
+    else:
+        print("⚠️ Arquivo não encontrado, usando dados embutidos")
+    
+    if not condominios:
+        condominios = {
+            "65169906000180": {
+                "nome": "CONDOMINIO EDIFICIO GROPIUS",
+                "codigo": "0762"
+            }
+        }
+    
+    CONDOMINIOS_CACHE = condominios
+    CACHE_TIMESTAMP = datetime.now()
+    
+    return condominios
 
-# ============================================================================
-# EXTRAÇÃO DE DADOS DO PDF
-# ============================================================================
-
-def extrair_dados_nfse(pdf_path):
-    """Extrai dados da NFS-e do PDF"""
-    dados = {
-        "cnpj_pagador": None,
-        "numero_nfse": None,
-        "data_emissao": None,
-        "data_vencimento": None,
-        "valor": None,
-        "linha_digitavel": None,
-        "codigo_barras": None,
-        "condominio": None,
-        "condominio_codigo": None
+def processar_arquivo(nome_arquivo, caminho_entrada=None):
+    """Processa um arquivo PDF"""
+    resultado = {
+        "arquivo": nome_arquivo,
+        "status": "erro",
+        "mensagem": "",
+        "dados": None
     }
     
     try:
-        with pdfplumber.open(pdf_path) as pdf:
-            texto_completo = ""
-            for pagina in pdf.pages:
-                t = pagina.extract_text()
-                if t:
-                    texto_completo += t + "\n"
-            
-            # Extrair CNPJ do pagador (tomador do serviço)
-            # Procurar todos os CNPJs e pegar o último (que é o condominio)
-            cnpjs_encontrados = re.findall(r"\d{2}\.?\d{3}\.?\d{3}/?0001-?\d{2}", texto_completo)
-            if cnpjs_encontrados:
-                # Pegar o último CNPJ (que é o condominio, não o fornecedor)
-                cnpj = re.sub(r"\D", "", cnpjs_encontrados[-1])
-                if len(cnpj) >= 14:
-                    dados["cnpj_pagador"] = cnpj[:14]
-            
-            # Extrair número da NFS-e
-            # Procurar padrões como "Número: 728" ou "NFS-e: 728" (máximo 10 dígitos)
-            match_nfse = re.search(r"(?:N(?:úmero da )?FS-e|Número da NFS-e|NFS-e)[:\s]+(\d{1,10})(?:\D|$)", texto_completo, re.IGNORECASE)
-            if match_nfse:
-                numero_nfse = match_nfse.group(1).strip()
-                # Garantir que é um número válido (não a chave de acesso de 50 dígitos)
-                if numero_nfse and len(numero_nfse) <= 10:
-                    dados["numero_nfse"] = numero_nfse
-            else:
-                # Se não encontrar, procurar por "Número: XXX" próximo a "NFS-e"
-                match_nfse2 = re.search(r"NFS-e[\s\S]{0,100}?Número[:\s]+(\d{1,10})", texto_completo, re.IGNORECASE)
-                if match_nfse2:
-                    numero_nfse = match_nfse2.group(1).strip()
-                    if numero_nfse and len(numero_nfse) <= 10:
-                        dados["numero_nfse"] = numero_nfse
-            
-            # Extrair data de emissão
-            match_emissao = re.search(r"(?:Data de Emissão|Emissão|Emitida em)[:\s]+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
-            if match_emissao:
-                dados["data_emissao"] = match_emissao.group(1)
-            
-            # Extrair data de vencimento
-            match_venc = re.search(r"(?:Vencimento|Vence em)[:\s]+(\d{2}/\d{2}/\d{4})", texto_completo, re.IGNORECASE)
-            if match_venc:
-                dados["data_vencimento"] = match_venc.group(1)
-            
-            # Extrair valor
-            match_valor = re.search(r"(?:Valor Total|Valor|Total)[:\s]+R\$\s*([\d\.,]+)", texto_completo, re.IGNORECASE)
-            if match_valor:
-                valor_str = match_valor.group(1).replace(".", "").replace(",", ".")
-                try:
-                    dados["valor"] = float(valor_str)
-                except:
-                    pass
-            
-            # Extrair linha digitável do boleto
-            regex_linha = r"\d{5}[\.\s]?\d{5}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d{5}[\.\s]?\d{6}[\.\s]?\d[\.\s]?\d{14}"
-            match_linha = re.search(regex_linha, texto_completo)
-            if match_linha:
-                linha = re.sub(r"\D", "", match_linha.group())
-                dados["linha_digitavel"] = linha
-                dados["codigo_barras"] = linha_digitavel_para_codigo_barras(linha)
-    
-    except Exception as e:
-        print(f"Erro ao extrair dados: {e}")
-    
-    return dados
-
-# ============================================================================
-# PROCESSAMENTO E GERAÇÃO DE REMESSA
-# ============================================================================
-
-def processar_arquivo(nome_arquivo, caminho_arquivo):
-    """Processa um arquivo PDF e extrai dados"""
-    try:
-        dados = extrair_dados_nfse(caminho_arquivo)
+        if caminho_entrada is None:
+            caminho_entrada = os.path.join(ENTRADA_PATH, nome_arquivo)
         
-        # Validações
-        if not dados["cnpj_pagador"]:
-            return {"status": "erro", "mensagem": "CNPJ do pagador não encontrado"}
+        if not os.path.exists(caminho_entrada):
+            resultado["mensagem"] = f"Arquivo não encontrado"
+            return resultado
         
-        if not dados["numero_nfse"]:
-            dados["numero_nfse"] = "0"
+        # Extrair CNPJ
+        cnpj_condominio = extrair_cnpj_do_nome_arquivo(nome_arquivo)
+        if not cnpj_condominio:
+            resultado["mensagem"] = "CNPJ não encontrado no nome"
+            return resultado
         
-        if not dados["data_vencimento"]:
-            return {"status": "erro", "mensagem": "Data de vencimento não encontrada"}
-        
-        if not dados["valor"]:
-            return {"status": "erro", "mensagem": "Valor não encontrado"}
-        
-        if not dados["codigo_barras"]:
-            return {"status": "erro", "mensagem": "Linha digitável/código de barras não encontrado"}
-        
-        # Procurar condominio
+        # Carregar condominios
         condominios = carregar_condominios()
-        condominio_info = condominios.get(dados["cnpj_pagador"], {})
         
-        dados["condominio"] = condominio_info.get("nome", "")
-        dados["condominio_codigo"] = condominio_info.get("codigo", "0000")
+        if cnpj_condominio not in condominios:
+            cnpj_limpo = cnpj_condominio.replace(".", "").replace("-", "").replace("/", "")
+            if len(cnpj_limpo) >= 14:
+                cnpj_limpo = cnpj_limpo[:14]
+            if cnpj_limpo not in condominios:
+                resultado["mensagem"] = f"Condomínio com CNPJ {cnpj_condominio} não cadastrado"
+                return resultado
+            cnpj_condominio = cnpj_limpo
         
-        # Salvar PDF
-        data_agora = datetime.now()
-        pasta_docs = os.path.join(PASTA_DOCS_PATH, str(data_agora.year), str(data_agora.month).zfill(2))
-        os.makedirs(pasta_docs, exist_ok=True)
+        cond_info = condominios[cnpj_condominio]
         
-        caminho_destino = os.path.join(pasta_docs, nome_arquivo)
-        with open(caminho_arquivo, 'rb') as src:
-            with open(caminho_destino, 'wb') as dst:
-                dst.write(src.read())
+        # Extrair dados do PDF
+        dados_pdf = extrair_dados_pdf(caminho_entrada)
+        if not dados_pdf["linha_digitavel"]:
+            resultado["mensagem"] = "Não foi possível extrair a linha digitável"
+            return resultado
         
-        dados["arquivo_salvo"] = caminho_destino
-        dados["url_pdf"] = f"/docs/{data_agora.year}/{str(data_agora.month).zfill(2)}/{nome_arquivo}"
+        # Converter para código de barras
+        codigo_barras = linha_digitavel_para_codigo_barras(dados_pdf["linha_digitavel"])
+        if not codigo_barras:
+            resultado["mensagem"] = "Código de barras inválido"
+            return resultado
         
-        return {"status": "sucesso", "dados": dados}
+        # Preparar dados
+        agora = datetime.now()
+        vencimento = dados_pdf["vencimento"] if dados_pdf["vencimento"] else agora.strftime("%d/%m/%Y")
+        data_emissao = agora.strftime("%d/%m/%Y")
+        valor_float = float(dados_pdf["valor"]) if dados_pdf["valor"] else 0.0
+        valor_formatado = formatar_valor_ahreas(valor_float)
+        cod_cond_erp = cond_info["codigo"].zfill(4)
+        nome_cond_erp = fixo(remover_acentos(cond_info["nome"]).upper(), 50)
+        
+        # Copiar para pasta local
+        ano_atual = agora.strftime("%Y")
+        mes_atual = agora.strftime("%m")
+        pasta_destino_docs = os.path.join(PASTA_DOCS_PATH, ano_atual, mes_atual)
+        os.makedirs(pasta_destino_docs, exist_ok=True)
+        caminho_pdf_destino = os.path.join(pasta_destino_docs, nome_arquivo)
+        try:
+            shutil.copy(caminho_entrada, caminho_pdf_destino)
+        except Exception as e:
+            print(f"Aviso: Não foi possível copiar para pasta local: {e}")
+        
+        # Gerar URL local/remota
+        # Se estiver no Render, usar URL pública
+        if os.getenv('RENDER'):
+            render_url = os.getenv('RENDER_EXTERNAL_URL', 'https://fedcorp-erp-dashboard.onrender.com')
+            url_local = f"{render_url}/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
+        else:
+            url_local = f"http://localhost:5000/docs/{ano_atual}/{mes_atual}/{nome_arquivo}"
+        
+        # Retornar dados
+        resultado["status"] = "sucesso"
+        resultado["mensagem"] = "Arquivo processado com sucesso"
+        resultado["dados"] = {
+            "cnpj": cnpj_condominio,
+            "cod_cond": cod_cond_erp,
+            "nome_cond": nome_cond_erp,
+            "vencimento": vencimento,
+            "data_emissao": data_emissao,
+            "valor_formatado": valor_formatado,
+            "valor_float": valor_float,
+            "codigo_barras": codigo_barras,
+            "nome_arquivo": nome_arquivo,
+            "caminho_pdf": caminho_pdf_destino,
+            "url_local": url_local,
+            "ano": ano_atual,
+            "mes": mes_atual
+        }
     
     except Exception as e:
-        return {"status": "erro", "mensagem": str(e)}
+        resultado["mensagem"] = f"Erro ao processar: {str(e)}"
+        import traceback
+        print(traceback.format_exc())
+    
+    return resultado
 
-def gerar_remessa_lote(lista_dados, competencia):
-    """Gera remessa no formato Ahreas conforme documentação oficial"""
+def gerar_remessa_lote(lista_dados, competencia=None):
+    """Gera remessa única com múltiplos registros"""
+    if not lista_dados:
+        return None
+    
+    agora = datetime.now()
+    if not competencia:
+        competencia = agora.strftime("%m%Y")
+    
     linhas = []
     
-    # Registro 0 (Header)
+    # REGISTRO 0 - HEADER
     header = (
-        "0" +                                      # Tipo
-        numerico(FORNECEDOR_CNPJ, 14) +           # CNPJ Fornecedor
-        fixo(FORNECEDOR_NOME, 60) +               # Nome Fornecedor
-        numerico(CNPJ_ADMIN, 14) +                # CNPJ Administradora
-        fixo(NOME_ADMIN, 60) +                    # Nome Administradora
-        numerico(competencia, 6) +                # Mês/Ano (MMAAAA)
-        fixo("", 241) +                           # Uso Ahreas
-        "0001"                                     # Sequencial
+        "0" +
+        FORNECEDOR_CNPJ.zfill(14) +
+        fixo(remover_acentos(FORNECEDOR_NOME).upper(), 60) +
+        CNPJ_ADMIN.zfill(14) +
+        fixo(remover_acentos(NOME_ADMIN).upper(), 60) +
+        competencia +
+        " " * 241 +
+        "0001"
     )
-    linhas.append(header)
+    linhas.append(fixo(header, 400))
     
+    # REGISTROS 1, 2 e 3 para cada boleto
     sequencial = 2
-    
     for dados in lista_dados:
-        # Registro 1 (Detalhe NF)
+        # REGISTRO 1
         registro_1 = (
-            "1" +                                                    # Tipo
-            numerico(dados.get("condominio_codigo", "0000"), 4) +   # Código Condominio
-            fixo("", 4) +                                           # Código Bloco (4 espaços)
-            numerico(dados.get("cnpj_pagador", ""), 14) +          # CNPJ Condominio
-            fixo(dados.get("condominio", ""), 50) +                # Nome Condominio
-            dados.get("data_vencimento", "01/01/2026") +           # Data Vencimento (DD/MM/AAAA)
-            formatar_valor_ahreas(dados.get("valor", 0)) +         # Valor Título
-            fixo(dados.get("codigo_barras", ""), 44) +             # Código Barras (44 chars)
-            formatar_valor_ahreas(dados.get("valor", 0)) +         # Valor Total NF
-            fixo("", 12) +                                          # IRRF
-            fixo("", 12) +                                          # ISS
-            fixo("", 12) +                                          # INSS
-            fixo("", 12) +                                          # CSSL/PIS/COFINS
-            fixo("", 12) +                                          # Descontos
-            "N" +                                                   # NF Venda (S/N)
-            dados.get("data_emissao", "01/01/2026") +              # Data Emissão NF (DD/MM/AAAA)
-            numerico(dados.get("numero_nfse", "0"), 10) +          # Número NF
-            fixo("", 5) +                                           # Série NF
-            fixo("", 5) +                                           # Tipo NF
-            fixo("", 12) +                                          # CSLL
-            fixo("", 12) +                                          # PIS
-            fixo("", 12) +                                          # COFINS
-            fixo("", 118) +                                         # Uso Ahreas
-            numerico(sequencial, 4)                                 # Sequencial
+            "1" +
+            dados["cod_cond"] +
+            "    " +
+            dados["cnpj"].zfill(14) +
+            dados["nome_cond"] +
+            dados["vencimento"] +
+            dados["valor_formatado"] +
+            dados["codigo_barras"] +
+            dados["valor_formatado"] +
+            "000000000,00" +
+            "000000000,00" +
+            "000000000,00" +
+            "000000000,00" +
+            "000000000,00" +
+            "N" +
+            dados["data_emissao"] +
+            "          " +
+            "     " +
+            "     " +
+            " " * 154 +
+            str(sequencial).zfill(4)
         )
-        linhas.append(registro_1)
+        linhas.append(fixo(registro_1, 400))
         
-        # Registro 2 (Detalhe Itens)
+        # REGISTRO 2
         registro_2 = (
-            "2" +                                                    # Tipo (Pos 001)
-            fixo(COD_PRODUTO_ERP, 10) +                            # Código Produto (Pos 002-011)
-            fixo(DESC_PRODUTO_ERP, 60) +                           # Descrição Produto (Pos 012-071)
-            fixo("", 12) +                                          # Valor Item Produtos (Pos 072-083)
-            fixo("", 12) +                                          # Valor Item Serviços (Pos 084-095)
-            formatar_valor_ahreas(dados.get("valor", 0)) +         # Valor Total Item (Pos 096-107)
-            fixo("", 12) +                                          # IRRF (Pos 108-119)
-            fixo("", 12) +                                          # ISS (Pos 120-131)
-            fixo("", 12) +                                          # INSS (Pos 132-143)
-            fixo("", 12) +                                          # CSSL/PIS/COFINS (Pos 144-155)
-            fixo("", 12) +                                          # Descontos (Pos 156-167)
-            fixo("", 229) +                                         # Uso Ahreas (Pos 168-396)
-            numerico(sequencial, 4)                                 # Sequencial (Pos 397-400)
+            "2" +
+            fixo(COD_PRODUTO_ERP, 10) +
+            fixo(DESC_PRODUTO_ERP, 60) +
+            "000000000,00" +
+            dados["valor_formatado"] +
+            dados["valor_formatado"] +
+            " " * 289 +
+            str(sequencial).zfill(4)
         )
-        linhas.append(registro_2)
+        linhas.append(fixo(registro_2, 400))
         
-        # Registro 3 (Detalhe Documentos)
-        numero_nfse_str = str(dados.get("numero_nfse", "0")).rjust(10)  # Número NF (10 dígitos, espaços à esquerda)
-        # URL completa com domínio
-        url_completa = "https://fedcorp-erp-dashboard.onrender.com" + dados.get("url_pdf", "")
-        registro_3 = (
-            "3" +                                                    # Tipo (Pos 001)
-            "0001" +                                                # Sequencial Imagens (Pos 002-005)
-            numero_nfse_str +                                       # Número NF (Pos 006-015, 10 dígitos)
-            fixo(url_completa, 300) +                               # URL Documento (Pos 016-315, 300 chars)
-            fixo("", 81) +                                          # Uso Ahreas (Pos 316-396)
-            numerico(sequencial, 4)                                 # Sequencial (Pos 397-400)
+        # REGISTRO 3 com URL local
+        url_pdf = dados.get("url_local", "")
+        
+        tamanho_fixo = 1 + 4 + 10 + 4
+        tamanho_url = len(url_pdf)
+        tamanho_espacos = 400 - tamanho_fixo - tamanho_url
+        
+        trailer_boleto = (
+            "3" +
+            "0001" +
+            "0000000000" +
+            fixo(url_pdf, 300) +
+            " " * 81 +
+            str(sequencial).zfill(4)
         )
-        linhas.append(registro_3)
+        linhas.append(fixo(trailer_boleto, 400))
         
         sequencial += 1
-        gc.collect()  # Limpar memória
-    
-    # Validar tamanho de cada linha
-    for i, linha in enumerate(linhas, 1):
-        if len(linha) != 400:
-            print(f"⚠️ Linha {i} tem {len(linha)} chars (deveria ter 400)")
     
     return "\n".join(linhas)
 
-# ============================================================================
-# ROTAS FLASK
-# ============================================================================
-
+# Rotas da API
 @app.route('/')
 def index():
-    """Página principal"""
-    return '''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>CONDOMED ERP Import</title>
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; }
-            .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-            .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-            .header h1 { font-size: 24px; margin-bottom: 5px; }
-            .header p { font-size: 14px; opacity: 0.9; }
-            .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-            .form-group { margin-bottom: 15px; }
-            .form-group label { display: block; margin-bottom: 5px; font-weight: 500; }
-            .form-group input, .form-group textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; }
-            .btn { display: inline-block; padding: 10px 20px; background: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
-            .btn:hover { background: #2980b9; }
-            .btn-danger { background: #e74c3c; }
-            .btn-danger:hover { background: #c0392b; }
-            .status { padding: 10px; border-radius: 4px; margin-top: 10px; }
-            .status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-            .status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-            .file-list { max-height: 300px; overflow-y: auto; }
-            .file-item { padding: 8px; background: #f9f9f9; margin: 5px 0; border-radius: 4px; font-size: 13px; }
-            .progress { width: 100%; height: 20px; background: #eee; border-radius: 4px; overflow: hidden; margin: 10px 0; }
-            .progress-bar { height: 100%; background: #3498db; transition: width 0.3s; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>🏢 CONDOMED ERP Import Dashboard</h1>
-                <p>Processador de Notas Fiscais de Serviço (NFS-e)</p>
-            </div>
-            
-            <div class="card">
-                <h2>📤 Upload de Arquivos</h2>
-                <div class="form-group">
-                    <label>Competência (Mês/Ano):</label>
-                    <input type="text" id="competencia" placeholder="052026" maxlength="6" value="">
-                </div>
-                <div class="form-group">
-                    <label>Selecione os arquivos PDF:</label>
-                    <input type="file" id="files" multiple accept=".pdf" />
-                </div>
-                <button class="btn" onclick="uploadArquivos()">📤 Upload e Processar</button>
-                <div id="status"></div>
-                <div class="progress" id="progress" style="display:none;">
-                    <div class="progress-bar" id="progressBar" style="width:0%"></div>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h2>📋 Arquivos Processados</h2>
-                <div class="file-list" id="fileList">
-                    <p style="color: #999;">Nenhum arquivo processado ainda</p>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h2>💾 Remessa</h2>
-                <button class="btn" onclick="gerarRemessa()">✅ Gerar Remessa</button>
-                <button class="btn btn-danger" onclick="limparTudo()">🗑️ Limpar Tudo</button>
-                <div id="remessaStatus"></div>
-            </div>
-        </div>
-        
-        <script>
-            let arquivosProcessados = [];
-            
-            async function uploadArquivos() {
-                const files = document.getElementById('files').files;
-                const competencia = document.getElementById('competencia').value;
-                
-                if (!files.length) {
-                    alert('Selecione pelo menos um arquivo');
-                    return;
-                }
-                
-                if (!competencia || competencia.length !== 6) {
-                    alert('Competência deve estar no formato MMAAAA (ex: 052026)');
-                    return;
-                }
-                
-                const formData = new FormData();
-                formData.append('competencia', competencia);
-                for (let file of files) {
-                    formData.append('files', file);
-                }
-                
-                document.getElementById('progress').style.display = 'block';
-                document.getElementById('status').innerHTML = '<div class="status">Processando...</div>';
-                
-                try {
-                    const response = await fetch('/api/processar', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (data.status === 'sucesso') {
-                        arquivosProcessados = data.arquivos;
-                        atualizarLista();
-                        document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.mensagem + '</div>';
-                    } else {
-                        document.getElementById('status').innerHTML = '<div class="status error">❌ ' + data.mensagem + '</div>';
-                    }
-                } catch (e) {
-                    document.getElementById('status').innerHTML = '<div class="status error">❌ Erro: ' + e.message + '</div>';
-                }
-                
-                document.getElementById('progress').style.display = 'none';
-            }
-            
-            function atualizarLista() {
-                const lista = document.getElementById('fileList');
-                if (arquivosProcessados.length === 0) {
-                    lista.innerHTML = '<p style="color: #999;">Nenhum arquivo processado</p>';
-                    return;
-                }
-                
-                lista.innerHTML = arquivosProcessados.map((arq, i) => `
-                    <div class="file-item">
-                        <strong>${i+1}. ${arq.arquivo}</strong><br>
-                        CNPJ: ${arq.cnpj_pagador} | Valor: R$ ${arq.valor} | NFS-e: ${arq.numero_nfse}
-                    </div>
-                `).join('');
-            }
-            
-            async function gerarRemessa() {
-                if (arquivosProcessados.length === 0) {
-                    alert('Nenhum arquivo processado');
-                    return;
-                }
-                
-                const competencia = document.getElementById('competencia').value;
-                
-                try {
-                    const response = await fetch('/api/gerar-remessa', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ arquivos: arquivosProcessados, competencia: competencia })
-                    });
-                    
-                    if (response.ok) {
-                        const blob = await response.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'REMESSA_CONDOMED_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.txt';
-                        a.click();
-                        document.getElementById('remessaStatus').innerHTML = '<div class="status success">✅ Remessa gerada com sucesso!</div>';
-                    } else {
-                        document.getElementById('remessaStatus').innerHTML = '<div class="status error">❌ Erro ao gerar remessa</div>';
-                    }
-                } catch (e) {
-                    document.getElementById('remessaStatus').innerHTML = '<div class="status error">❌ Erro: ' + e.message + '</div>';
-                }
-            }
-            
-            function limparTudo() {
-                if (confirm('Tem certeza que deseja limpar tudo?')) {
-                    arquivosProcessados = [];
-                    document.getElementById('files').value = '';
-                    document.getElementById('competencia').value = '';
-                    atualizarLista();
-                    document.getElementById('status').innerHTML = '';
-                    document.getElementById('remessaStatus').innerHTML = '';
-                }
-            }
-        </script>
-    </body>
-    </html>
-    '''
-
-@app.route('/api/processar', methods=['POST'])
-def api_processar():
-    """API para processar arquivos"""
-    try:
-        competencia = request.form.get('competencia', '')
-        files = request.files.getlist('files')
-        
-        if not files or not competencia:
-            return jsonify({"status": "erro", "mensagem": "Arquivos ou competência não fornecidos"}), 400
-        
-        arquivos_processados = []
-        
-        for file in files:
-            if file.filename == '':
-                continue
-            
-            # Salvar temporariamente
-            filename = secure_filename(file.filename)
-            temp_path = os.path.join(TEMP_UPLOAD_PATH, filename)
-            file.save(temp_path)
-            
-            # Processar
-            resultado = processar_arquivo(filename, temp_path)
-            
-            if resultado["status"] == "sucesso":
-                dados = resultado["dados"]
-                arquivos_processados.append({
-                    "arquivo": filename,
-                    "cnpj_pagador": dados["cnpj_pagador"],
-                    "numero_nfse": dados["numero_nfse"],
-                    "valor": dados["valor"],
-                    "data_vencimento": dados["data_vencimento"],
-                    "data_emissao": dados["data_emissao"],
-                    "condominio": dados["condominio"],
-                    "condominio_codigo": dados["condominio_codigo"],
-                    "codigo_barras": dados["codigo_barras"],
-                    "url_pdf": dados["url_pdf"]
-                })
-            
-            # Limpar
-            try:
-                os.remove(temp_path)
-            except:
-                pass
-            
-            gc.collect()
-        
+    index_path = os.path.join(app.static_folder, 'index.html')
+    if os.path.exists(index_path):
+        return send_from_directory(app.static_folder, 'index.html')
+    else:
         return jsonify({
-            "status": "sucesso",
-            "mensagem": f"{len(arquivos_processados)} arquivo(s) processado(s) com sucesso",
-            "arquivos": arquivos_processados
+            "status": "error",
+            "message": "index.html não encontrado",
+            "static_folder": app.static_folder
+        }), 404
+
+@app.route('/api/pending-files', methods=['GET'])
+def pending_files():
+    try:
+        os.makedirs(ENTRADA_PATH, exist_ok=True)
+        arquivos = [f for f in os.listdir(ENTRADA_PATH) if f.lower().endswith('.pdf')]
+        return jsonify({
+            "total": len(arquivos),
+            "arquivos": arquivos
         })
-    
-    except Exception as e:
-        return jsonify({"status": "erro", "mensagem": str(e)}), 500
-
-@app.route('/api/gerar-remessa', methods=['POST'])
-def api_gerar_remessa():
-    """API para gerar remessa"""
-    try:
-        data = request.json
-        arquivos = data.get('arquivos', [])
-        competencia = data.get('competencia', '')
-        
-        if not arquivos or not competencia:
-            return jsonify({"status": "erro", "mensagem": "Dados incompletos"}), 400
-        
-        remessa = gerar_remessa_lote(arquivos, competencia)
-        
-        # Retornar como arquivo
-        buffer = BytesIO(remessa.encode('utf-8'))
-        return send_file(
-            buffer,
-            mimetype='text/plain',
-            as_attachment=True,
-            download_name=f'REMESSA_CONDOMED_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
-        )
-    
-    except Exception as e:
-        return jsonify({"status": "erro", "mensagem": str(e)}), 500
-
-@app.route('/docs/<year>/<month>/<filename>')
-def servir_pdf(year, month, filename):
-    """Serve PDFs salvos"""
-    try:
-        caminho_dir = os.path.join(PASTA_DOCS_PATH, year, month)
-        if os.path.exists(os.path.join(caminho_dir, filename)):
-            return send_from_directory(caminho_dir, filename, mimetype='application/pdf')
-        else:
-            return jsonify({"erro": "Arquivo não encontrado"}), 404
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
-# ============================================================================
-# MAIN
-# ============================================================================
+@app.route('/api/upload', methods=['POST'])
+def upload_files():
+    try:
+        if 'files' not in request.files:
+            return jsonify({"erro": "Nenhum arquivo enviado"}), 400
+        
+        files = request.files.getlist('files')
+        modo_lote = request.form.get('modo_lote', 'false').lower() == 'true'
+        
+        resultados = {
+            "total": len(files),
+            "sucesso": 0,
+            "erros": 0,
+            "modo_lote": modo_lote,
+            "remessa": None,
+            "detalhes": []
+        }
+        
+        lista_dados_processados = []
+        
+        for file in files:
+            if file and file.filename.lower().endswith('.pdf'):
+                try:
+                    filename = secure_filename(file.filename)
+                    temp_path = os.path.join(TEMP_UPLOAD_PATH, filename)
+                    file.save(temp_path)
+                    
+                    resultado = processar_arquivo(filename, temp_path)
+                    resultados["detalhes"].append(resultado)
+                    
+                    if resultado["status"] == "sucesso":
+                        resultados["sucesso"] += 1
+                        if modo_lote:
+                            lista_dados_processados.append(resultado["dados"])
+                    else:
+                        resultados["erros"] += 1
+                    
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
+                
+                except Exception as e:
+                    resultados["erros"] += 1
+                    resultados["detalhes"].append({
+                        "arquivo": file.filename,
+                        "status": "erro",
+                        "mensagem": str(e)
+                    })
+        
+        # Se modo lote
+        if modo_lote and lista_dados_processados:
+            try:
+                agora = datetime.now()
+                competencia = agora.strftime("%m%Y")
+                conteudo_remessa = gerar_remessa_lote(lista_dados_processados, competencia)
+                
+                nome_remessa = f"REMESSA_FEDCORP_LOTE_{agora.strftime('%Y%m%d%H%M%S')}.txt"
+                caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
+                
+                os.makedirs(GERADAS_PATH, exist_ok=True)
+                with open(caminho_remessa, 'w', encoding='utf-8') as f:
+                    f.write(conteudo_remessa)
+                
+                resultados["remessa"] = nome_remessa
+            
+            except Exception as e:
+                resultados["erro_lote"] = str(e)
+        
+        return jsonify(resultados)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/api/download-remessas', methods=['GET'])
+def download_remessas():
+    try:
+        os.makedirs(GERADAS_PATH, exist_ok=True)
+        
+        remessas = [f for f in os.listdir(GERADAS_PATH) if f.endswith('.txt')]
+        
+        if not remessas:
+            return jsonify({"erro": "Nenhuma remessa disponível"}), 404
+        
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for remessa in remessas:
+                remessa_path = os.path.join(GERADAS_PATH, remessa)
+                zip_file.write(remessa_path, arcname=remessa)
+        
+        zip_buffer.seek(0)
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'remessas_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
+        )
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/docs/<ano>/<mes>/<arquivo>')
+def servir_documento(ano, mes, arquivo):
+    try:
+        caminho = os.path.join(PASTA_DOCS_PATH, ano, mes, arquivo)
+        if os.path.exists(caminho):
+            return send_from_directory(os.path.dirname(caminho), arquivo)
+        return jsonify({"erro": "Arquivo não encontrado"}), 404
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/<path:filename>')
+def static_files(filename):
+    try:
+        return send_from_directory(app.static_folder, filename)
+    except:
+        try:
+            return send_from_directory(app.static_folder, 'index.html')
+        except:
+            return jsonify({"erro": "Arquivo não encontrado"}), 404
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    print("🚀 Iniciando FEDCORP ERP Dashboard...")
+    print(f"📁 BASE_PATH: {BASE_PATH}")
+    print(f"📂 PASTA_DOCS_PATH: {PASTA_DOCS_PATH}")
+    
+    # Pré-carregar condominios
+    print("📝 Carregando dados de condominios...")
+    condominios = carregar_condominios()
+    print(f"✅ {len(condominios)} condominio(s) carregado(s)")
+    
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=False)
