@@ -15,9 +15,7 @@ from io import BytesIO
 import zipfile
 
 # Configurar o caminho correto para os arquivos estáticos
-static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
-if not os.path.exists(static_folder):
-    static_folder = os.path.join(os.path.dirname(__file__), 'dist')
+static_folder = os.path.join(os.path.dirname(__file__), 'dist')
 
 app = Flask(__name__, static_folder=static_folder, static_url_path='')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
