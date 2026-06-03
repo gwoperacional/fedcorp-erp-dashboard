@@ -84,6 +84,7 @@
             
             const formData = new FormData();
             formData.append('competencia', competencia);
+            formData.append('modo_lote', 'true');
             for (let file of files) {
                 formData.append('files', file);
             }
@@ -99,12 +100,12 @@
                 
                 const data = await response.json();
                 
-                if (data.status === 'sucesso') {
-                    arquivosProcessados = data.arquivos;
+                if (data.sucesso > 0) {
+                    arquivosProcessados = data.detalhes.filter(d => d.status === 'sucesso');
                     atualizarLista();
-                    document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.mensagem + '</div>';
+                    document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.sucesso + ' arquivo(s) processado(s) com sucesso!</div>';
                 } else {
-                    document.getElementById('status').innerHTML = '<div class="status error">❌ ' + data.mensagem + '</div>';
+                    document.getElementById('status').innerHTML = '<div class="status error">❌ Erro ao processar arquivos</div>';
                 }
             } catch (e) {
                 document.getElementById('status').innerHTML = '<div class="status error">❌ Erro: ' + e.message + '</div>';
