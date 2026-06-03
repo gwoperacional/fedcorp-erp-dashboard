@@ -6,6 +6,7 @@ import pdfplumber
 import tempfile
 import json
 import subprocess
+import io
 from flask import Flask, jsonify, send_from_directory, request, send_file
 from datetime import datetime
 from typing import List, Dict, Any
@@ -15,7 +16,9 @@ from io import BytesIO
 import zipfile
 
 # Configurar o caminho correto para os arquivos estáticos
-static_folder = os.path.join(os.path.dirname(__file__), 'dist')
+static_folder = os.path.join(os.path.dirname(__file__), 'dist', 'public')
+if not os.path.exists(static_folder):
+    static_folder = os.path.join(os.path.dirname(__file__), 'dist')
 
 app = Flask(__name__, static_folder=static_folder, static_url_path='')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
@@ -458,17 +461,18 @@ def upload_files():
         if modo_lote and lista_dados_processados:
             try:
                 agora = datetime.now()
-                competencia = agora.strftime("%m%Y")
+                competencia = request.form.get('competencia', agora.strftime("%m%Y"))
                 conteudo_remessa = gerar_remessa_lote(lista_dados_processados, competencia)
                 
                 nome_remessa = f"REMESSA_FEDCORP_LOTE_{agora.strftime('%Y%m%d%H%M%S')}.txt"
-                caminho_remessa = os.path.join(GERADAS_PATH, nome_remessa)
                 
-                os.makedirs(GERADAS_PATH, exist_ok=True)
-                with open(caminho_remessa, 'w', encoding='utf-8') as f:
-                    f.write(conteudo_remessa)
-                
-                resultados["remessa"] = nome_remessa
+                # Retornar o arquivo direto (sem salvar em fila)
+                return send_file(
+                    io.BytesIO(conteudo_remessa.encode('utf-8')),
+                    mimetype='text/plain',
+                    as_attachment=True,
+                    download_name=nome_remessa
+                )
             
             except Exception as e:
                 resultados["erro_lote"] = str(e)

@@ -17,8 +17,6 @@
         .btn:hover { background: #2980b9; }
         .btn-danger { background: #e74c3c; }
         .btn-danger:hover { background: #c0392b; }
-        .btn-success { background: #27ae60; }
-        .btn-success:hover { background: #229954; }
         .status { padding: 10px; border-radius: 4px; margin-top: 10px; }
         .status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
@@ -60,8 +58,7 @@
         </div>
         
         <div class="card">
-            <h2>💾 Remessas</h2>
-            <button class="btn btn-success" onclick="baixarRemessas()">📥 Baixar Remessas (ZIP)</button>
+            <h2>💾 Remessa</h2>
             <button class="btn btn-danger" onclick="limparTudo()">🗑️ Limpar Tudo</button>
             <div id="remessaStatus"></div>
         </div>
@@ -100,14 +97,42 @@
                     body: formData
                 });
                 
-                const data = await response.json();
-                
-                if (data.sucesso > 0) {
-                    arquivosProcessados = data.detalhes.filter(d => d.status === 'sucesso').map(d => d.dados);
-                    atualizarLista();
-                    document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.sucesso + ' arquivo(s) processado(s) com sucesso! Remessa gerada automaticamente.</div>';
+                // Se a resposta é um arquivo (remessa)
+                if (response.headers.get('content-type') === 'text/plain; charset=utf-8') {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    
+                    // Extrair nome do arquivo do header Content-Disposition
+                    const contentDisposition = response.headers.get('content-disposition');
+                    let filename = 'remessa.txt';
+                    if (contentDisposition) {
+                        const filenameMatch = contentDisposition.match(/filename="(.+?)"/);
+                        if (filenameMatch) filename = filenameMatch[1];
+                    }
+                    
+                    a.download = filename;
+                    a.click();
+                    
+                    document.getElementById('status').innerHTML = '<div class="status success">✅ Remessa gerada e baixada com sucesso!</div>';
+                    document.getElementById('remessaStatus').innerHTML = '<div class="status success">📥 Arquivo: ' + filename + '</div>';
+                    
+                    // Limpar lista após download
+                    setTimeout(() => {
+                        limparTudo();
+                    }, 2000);
                 } else {
-                    document.getElementById('status').innerHTML = '<div class="status error">❌ Erro ao processar arquivos</div>';
+                    // Se a resposta é JSON (erro ou sem remessa)
+                    const data = await response.json();
+                    
+                    if (data.sucesso > 0) {
+                        arquivosProcessados = data.detalhes.filter(d => d.status === 'sucesso').map(d => d.dados);
+                        atualizarLista();
+                        document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.sucesso + ' arquivo(s) processado(s) com sucesso!</div>';
+                    } else {
+                        document.getElementById('status').innerHTML = '<div class="status error">❌ Erro ao processar arquivos</div>';
+                    }
                 }
             } catch (e) {
                 document.getElementById('status').innerHTML = '<div class="status error">❌ Erro: ' + e.message + '</div>';
@@ -129,28 +154,6 @@
                     CNPJ: ${arq.cnpj} | Valor: R$ ${arq.valor_formatado} | Vencimento: ${arq.vencimento}
                 </div>
             `).join('');
-        }
-        
-        async function baixarRemessas() {
-            try {
-                const response = await fetch('/api/download-remessas', {
-                    method: 'GET'
-                });
-                
-                if (response.ok) {
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'remessas_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.zip';
-                    a.click();
-                    document.getElementById('remessaStatus').innerHTML = '<div class="status success">✅ Remessas baixadas com sucesso!</div>';
-                } else {
-                    document.getElementById('remessaStatus').innerHTML = '<div class="status error">❌ Nenhuma remessa disponível para download</div>';
-                }
-            } catch (e) {
-                document.getElementById('remessaStatus').innerHTML = '<div class="status error">❌ Erro: ' + e.message + '</div>';
-            }
         }
         
         function limparTudo() {
