@@ -97,8 +97,10 @@
                     body: formData
                 });
                 
+                const contentType = response.headers.get('content-type') || '';
+                
                 // Se a resposta é um arquivo (remessa)
-                if (response.headers.get('content-type') === 'text/plain; charset=utf-8') {
+                if (contentType.includes('text/plain') || response.status === 200 && !contentType.includes('application/json')) {
                     const blob = await response.blob();
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement('a');
@@ -108,7 +110,7 @@
                     const contentDisposition = response.headers.get('content-disposition');
                     let filename = 'remessa.txt';
                     if (contentDisposition) {
-                        const filenameMatch = contentDisposition.match(/filename="(.+?)"/);
+                        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
                         if (filenameMatch) filename = filenameMatch[1];
                     }
                     
