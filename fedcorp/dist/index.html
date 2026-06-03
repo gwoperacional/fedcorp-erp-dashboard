@@ -101,7 +101,7 @@
                 const data = await response.json();
                 
                 if (data.sucesso > 0) {
-                    arquivosProcessados = data.detalhes.filter(d => d.status === 'sucesso');
+                    arquivosProcessados = data.detalhes.filter(d => d.status === 'sucesso').map(d => d.dados);
                     atualizarLista();
                     document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.sucesso + ' arquivo(s) processado(s) com sucesso!</div>';
                 } else {
@@ -123,8 +123,8 @@
             
             lista.innerHTML = arquivosProcessados.map((arq, i) => `
                 <div class="file-item">
-                    <strong>${i+1}. ${arq.arquivo}</strong><br>
-                    CNPJ: ${arq.cnpj_pagador} | Valor: R$ ${arq.valor} | Vencimento: ${arq.data_vencimento}
+                    <strong>${i+1}. ${arq.nome_arquivo}</strong><br>
+                    CNPJ: ${arq.cnpj} | Valor: R$ ${arq.valor_formatado} | Vencimento: ${arq.vencimento}
                 </div>
             `).join('');
         }
