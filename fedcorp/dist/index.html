@@ -59,6 +59,7 @@
         
         <div class="card">
             <h2>💾 Remessa</h2>
+            <button class="btn" onclick="gerarRemessa()">✅ Gerar Remessa</button>
             <button class="btn btn-danger" onclick="limparTudo()">🗑️ Limpar Tudo</button>
             <div id="remessaStatus"></div>
         </div>
@@ -83,7 +84,6 @@
             
             const formData = new FormData();
             formData.append('competencia', competencia);
-            formData.append('modo_lote', 'true');
             for (let file of files) {
                 formData.append('files', file);
             }
@@ -99,53 +99,18 @@
                 
                 const data = await response.json();
                 
-                if (data.sucesso > 0) {
-                    arquivosProcessados = data.detalhes.filter(d => d.status === 'sucesso').map(d => d.dados);
+                if (data.status === 'sucesso') {
+                    arquivosProcessados = data.arquivos;
                     atualizarLista();
-                    
-                    // Se tem remessa em base64, fazer download
-                    if (data.remessa_base64) {
-                        baixarRemessaBase64(data.remessa, data.remessa_base64);
-                        document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.sucesso + ' arquivo(s) processado(s) com sucesso! Remessa gerada e baixada.</div>';
-                    } else {
-                        document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.sucesso + ' arquivo(s) processado(s) com sucesso!</div>';
-                    }
+                    document.getElementById('status').innerHTML = '<div class="status success">✅ ' + data.mensagem + '</div>';
                 } else {
-                    document.getElementById('status').innerHTML = '<div class="status error">❌ Erro ao processar arquivos</div>';
+                    document.getElementById('status').innerHTML = '<div class="status error">❌ ' + data.mensagem + '</div>';
                 }
             } catch (e) {
                 document.getElementById('status').innerHTML = '<div class="status error">❌ Erro: ' + e.message + '</div>';
             }
             
             document.getElementById('progress').style.display = 'none';
-        }
-        
-        function baixarRemessaBase64(filename, base64Content) {
-            try {
-                // Decodificar base64
-                const binaryString = atob(base64Content);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                
-                // Criar blob
-                const blob = new Blob([bytes], { type: 'text/plain' });
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                a.click();
-                
-                document.getElementById('remessaStatus').innerHTML = '<div class="status success">📥 Arquivo: ' + filename + '</div>';
-                
-                // Limpar após 2 segundos
-                setTimeout(() => {
-                    limparTudo();
-                }, 2000);
-            } catch (e) {
-                document.getElementById('remessaStatus').innerHTML = '<div class="status error">❌ Erro ao baixar: ' + e.message + '</div>';
-            }
         }
         
         function atualizarLista() {
@@ -157,10 +122,41 @@
             
             lista.innerHTML = arquivosProcessados.map((arq, i) => `
                 <div class="file-item">
-                    <strong>${i+1}. ${arq.nome_arquivo}</strong><br>
-                    CNPJ: ${arq.cnpj} | Valor: R$ ${arq.valor_formatado} | Vencimento: ${arq.vencimento}
+                    <strong>${i+1}. ${arq.arquivo}</strong><br>
+                    CNPJ: ${arq.cnpj_pagador} | Valor: R$ ${arq.valor} | Vencimento: ${arq.data_vencimento}
                 </div>
             `).join('');
+        }
+        
+        async function gerarRemessa() {
+            if (arquivosProcessados.length === 0) {
+                alert('Nenhum arquivo processado');
+                return;
+            }
+            
+            const competencia = document.getElementById('competencia').value;
+            
+            try {
+                const response = await fetch('/api/gerar-remessa', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ arquivos: arquivosProcessados, competencia: competencia })
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'REMESSA_FEDCORP_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.txt';
+                    a.click();
+                    document.getElementById('remessaStatus').innerHTML = '<div class="status success">✅ Remessa gerada com sucesso!</div>';
+                } else {
+                    document.getElementById('remessaStatus').innerHTML = '<div class="status error">❌ Erro ao gerar remessa</div>';
+                }
+            } catch (e) {
+                document.getElementById('remessaStatus').innerHTML = '<div class="status error">❌ Erro: ' + e.message + '</div>';
+            }
         }
         
         function limparTudo() {
