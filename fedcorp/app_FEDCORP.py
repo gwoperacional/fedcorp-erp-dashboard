@@ -475,7 +475,9 @@ def upload_files():
                 )
             
             except Exception as e:
+                print(f"Erro ao gerar remessa: {str(e)}")
                 resultados["erro_lote"] = str(e)
+                return jsonify(resultados)
         
         return jsonify(resultados)
     except Exception as e:
