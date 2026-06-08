@@ -467,13 +467,10 @@ def upload_files():
                 
                 nome_remessa = f"REMESSA_FEDCORP_LOTE_{agora.strftime('%Y%m%d%H%M%S')}.txt"
                 
-                # Retornar o arquivo direto (sem salvar em fila)
-                return send_file(
-                    io.BytesIO(conteudo_remessa.encode('utf-8')),
-                    mimetype='text/plain',
-                    as_attachment=True,
-                    download_name=nome_remessa
-                )
+                # Retornar a remessa em base64 dentro de JSON
+                remessa_base64 = base64.b64encode(conteudo_remessa.encode('utf-8')).decode('utf-8')
+                resultados["remessa"] = nome_remessa
+                resultados["remessa_base64"] = remessa_base64
             
             except Exception as e:
                 resultados["erro_lote"] = str(e)
