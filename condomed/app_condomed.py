@@ -409,6 +409,34 @@ def gerar_remessa_lote(lista_dados, competencia, tipo='CONDOMED'):
             fixo("", 118) +                                         # Uso Ahreas
             numerico(sequencial, 4)                                 # Sequencial
         )
+        else:  # CONDOMED
+            # CONDOMED usa formato simplificado
+            registro_1 = (
+                "1" +                                                    # Tipo
+                numerico(dados.get("condominio_codigo", "0000"), 4) +   # Código Condominio
+                fixo("", 4) +                                           # Código Bloco (4 espaços)
+                numerico(dados.get("cnpj_pagador", ""), 14) +          # CNPJ Condominio
+                fixo(dados.get("condominio", ""), 50) +                # Nome Condominio
+                dados.get("data_vencimento", "01/01/2026") +           # Data Vencimento (DD/MM/AAAA)
+                formatar_valor_ahreas(dados.get("valor", 0)) +         # Valor Título
+                fixo(dados.get("codigo_barras", ""), 44) +             # Código Barras (44 chars)
+                formatar_valor_ahreas(dados.get("valor", 0)) +         # Valor Total NF
+                fixo("", 12) +                                          # IRRF
+                fixo("", 12) +                                          # ISS
+                fixo("", 12) +                                          # INSS
+                fixo("", 12) +                                          # CSSL/PIS/COFINS
+                fixo("", 12) +                                          # Descontos
+                "N" +                                                   # NF Venda (S/N)
+                dados.get("data_emissao", "01/01/2026") +              # Data Emissão NF (DD/MM/AAAA)
+                numerico(dados.get("numero_nfse", "0"), 10) +          # Número NF
+                fixo("", 5) +                                           # Série NF
+                fixo("", 5) +                                           # Tipo NF
+                fixo("", 12) +                                          # CSLL
+                fixo("", 12) +                                          # PIS
+                fixo("", 12) +                                          # COFINS
+                fixo("", 118) +                                         # Uso Ahreas
+                numerico(sequencial, 4)                                 # Sequencial
+            )
         linhas.append(registro_1)
         
         # Registro 2 (Detalhe Itens)
