@@ -459,8 +459,12 @@ def gerar_remessa_lote(lista_dados, competencia, tipo='CONDOMED'):
         
         # Registro 3 (Detalhe Documentos)
         numero_nfse_str = str(dados.get("numero_nfse", "0")).rjust(10)  # Número NF (10 dígitos, espaços à esquerda)
-        # URL completa com domínio
-        url_completa = "https://fedcorp-erp-dashboard.onrender.com" + dados.get("url_pdf", "")
+        # URL completa com domínio (dinâmica baseada no tipo)
+        if tipo == "FEDCORP":
+            dominio = "https://fedcorp-erp-dashboard.onrender.com"
+        else:  # CONDOMED
+            dominio = "https://condomed-erp-dashboard.onrender.com"
+        url_completa = dominio + dados.get("url_pdf", "")
         registro_3 = (
             "3" +                                                    # Tipo (Pos 001)
             "0001" +                                                # Sequencial Imagens (Pos 002-005)
