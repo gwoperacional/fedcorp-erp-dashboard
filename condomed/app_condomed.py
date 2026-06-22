@@ -711,10 +711,18 @@ def api_gerar_remessa():
         arquivos = data.get('arquivos', [])
         competencia = data.get('competencia', '')
         
+        print(f"\n=== DEBUG /api/gerar-remessa ===")
+        print(f"Competencia: {competencia}")
+        print(f"Número de arquivos: {len(arquivos)}")
+        if arquivos:
+            print(f"Primeiro arquivo: {arquivos[0]}")
+        
         if not arquivos or not competencia:
             return jsonify({"status": "erro", "mensagem": "Dados incompletos"}), 400
         
+        print(f"Chamando gerar_remessa_lote...")
         remessa = gerar_remessa_lote(arquivos, competencia, tipo='CONDOMED')
+        print(f"Remessa gerada com sucesso! Tamanho: {len(remessa)} caracteres")
         
         # Retornar como arquivo
         buffer = BytesIO(remessa.encode('utf-8'))
@@ -726,6 +734,11 @@ def api_gerar_remessa():
         )
     
     except Exception as e:
+        import traceback
+        print(f"\n=== ERRO em /api/gerar-remessa ===")
+        print(f"Erro: {str(e)}")
+        print(f"Traceback:\n{traceback.format_exc()}")
+        print(f"============================\n")
         return jsonify({"status": "erro", "mensagem": str(e)}), 500
 
 @app.route('/docs/<year>/<month>/<filename>')
