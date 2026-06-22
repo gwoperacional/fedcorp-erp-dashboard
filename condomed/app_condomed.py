@@ -714,7 +714,7 @@ def api_gerar_remessa():
         if not arquivos or not competencia:
             return jsonify({"status": "erro", "mensagem": "Dados incompletos"}), 400
         
-        remessa = gerar_remessa_lote(arquivos, competencia)
+        remessa = gerar_remessa_lote(arquivos, competencia, tipo='CONDOMED')
         
         # Retornar como arquivo
         buffer = BytesIO(remessa.encode('utf-8'))
