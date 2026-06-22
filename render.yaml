@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: condomed-erp
+    runtime: python311
+    rootDir: condomed
+    startCommand: python app_condomed.py
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_APP
+        value: app_condomed.py
+    buildCommand: pip install -r requirements.txt
+    port: 5000
+    healthCheckPath: /
+    autoDeploy: true
