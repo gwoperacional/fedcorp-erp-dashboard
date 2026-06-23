@@ -337,12 +337,31 @@ def processar_arquivo(nome_arquivo, caminho_arquivo):
         # Salvar PDF
         data_agora = datetime.now()
         pasta_docs = os.path.join(PASTA_DOCS_PATH, str(data_agora.year), str(data_agora.month).zfill(2))
+        
+        print(f"\n=== DEBUG Salvar PDF ===")
+        print(f"Nome arquivo: {nome_arquivo}")
+        print(f"Caminho origem: {caminho_arquivo}")
+        print(f"Pasta docs: {pasta_docs}")
+        print(f"Arquivo origem existe? {os.path.exists(caminho_arquivo)}")
+        
         os.makedirs(pasta_docs, exist_ok=True)
+        print(f"Pasta criada/existe? {os.path.exists(pasta_docs)}")
         
         caminho_destino = os.path.join(pasta_docs, nome_arquivo)
-        with open(caminho_arquivo, 'rb') as src:
-            with open(caminho_destino, 'wb') as dst:
-                dst.write(src.read())
+        print(f"Caminho destino: {caminho_destino}")
+        
+        try:
+            with open(caminho_arquivo, 'rb') as src:
+                conteudo = src.read()
+                print(f"Tamanho do arquivo: {len(conteudo)} bytes")
+                with open(caminho_destino, 'wb') as dst:
+                    dst.write(conteudo)
+            print(f"Arquivo salvo? {os.path.exists(caminho_destino)}")
+            print(f"======================\n")
+        except Exception as e:
+            print(f"ERRO ao salvar: {str(e)}")
+            print(f"======================\n")
+            raise
         
         dados["arquivo_salvo"] = caminho_destino
         dados["url_pdf"] = f"/docs/{data_agora.year}/{str(data_agora.month).zfill(2)}/{nome_arquivo}"
