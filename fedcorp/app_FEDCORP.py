@@ -484,6 +484,40 @@ def upload_files():
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
+@app.route('/api/gerar-remessa', methods=['POST'])
+def gerar_remessa():
+    """Gera remessa a partir dos dados processados"""
+    try:
+        data = request.get_json()
+        arquivos = data.get('arquivos', [])
+        competencia = data.get('competencia')
+        
+        if not arquivos:
+            return jsonify({"erro": "Nenhum arquivo fornecido"}), 400
+        
+        if not competencia:
+            competencia = datetime.now().strftime("%m%Y")
+        
+        # Gerar remessa
+        remessa = gerar_remessa_lote(arquivos, competencia)
+        
+        if not remessa:
+            return jsonify({"erro": "Erro ao gerar remessa"}), 500
+        
+        # Retornar como arquivo para download
+        buffer = BytesIO(remessa.encode('utf-8'))
+        return send_file(
+            buffer,
+            mimetype='text/plain',
+            as_attachment=True,
+            download_name=f'REMESSA_FEDCORP_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
+        )
+    except Exception as e:
+        import traceback
+        print(f"Erro em /api/gerar-remessa: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({"erro": str(e)}), 500
+
 @app.route('/api/download-remessas', methods=['GET'])
 def download_remessas():
     try:
