@@ -22,17 +22,24 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 
 # Configurações de Caminhos
 BASE_PATH = os.getenv("BASE_PATH", r"G:\Wallpaper\FEDCORP_PROCESSADOR")
-ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
-GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
-NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
 
-# Armazenamento local no Render
-PASTA_DOCS_PATH = os.path.join("/tmp", "fedcorp_docs")
+# Se estiver no Render, usar /tmp para armazenamento
+if os.getenv('RENDER'):
+    ENTRADA_PATH = os.path.join("/tmp", "fedcorp_entrada")
+    GERADAS_PATH = os.path.join("/tmp", "fedcorp_remessas")
+    NAO_PROCESSADOS_PATH = os.path.join("/tmp", "fedcorp_nao_processados")
+    PASTA_DOCS_PATH = os.path.join("/tmp", "fedcorp_docs")
+else:
+    ENTRADA_PATH = os.path.join(BASE_PATH, "ENTRADA")
+    GERADAS_PATH = os.path.join(BASE_PATH, "REMESSAS_GERADAS")
+    NAO_PROCESSADOS_PATH = os.path.join(BASE_PATH, "NAO_PROCESSADOS")
+    PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS") if os.path.exists(BASE_PATH) else os.path.join("/tmp", "fedcorp_docs")
+
+# Criar pastas se não existirem
+os.makedirs(ENTRADA_PATH, exist_ok=True)
+os.makedirs(GERADAS_PATH, exist_ok=True)
+os.makedirs(NAO_PROCESSADOS_PATH, exist_ok=True)
 os.makedirs(PASTA_DOCS_PATH, exist_ok=True)
-
-# Tentar usar pasta local se disponível
-if os.path.exists(r"G:\Wallpaper\FEDCORP_PROCESSADOR"):
-    PASTA_DOCS_PATH = os.path.join(BASE_PATH, "DOCUMENTOS_ANEXADOS")
 
 # Possíveis caminhos para o arquivo de condominios
 POSSIBLE_PATHS = [
